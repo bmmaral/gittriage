@@ -1,0 +1,47 @@
+name: Inactivity Check
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Check inactivity
+        id: check
+        run: |
+          DAYS=$(git log -1 --format="%cr" | grep -o '[0-9]\+' | head -1)
+          if [ -z "$DAYS" ]; then
+            DAYS=0
+          fi
+          if [ "$DAYS" -ge "5" ]; then
+            echo "CREATE_ISSUE=true" >> $GITHUB_OUTPUT
+            echo "DAYS=$DAYS" >> $GITHUB_OUTPUT
+
+            if [ -f "PRD.md" ]; then
+              NEXT=$(grep -A5 "## Next Steps" PRD.md | tail -n +2 | head -5)
+              {
+                echo "NEXT_STEPS<<EOF"
+                echo "$NEXT"
+                echo "EOF"
+              } >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Create issue
+        if: steps.check.outputs.CREATE_ISSUE == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `⏰ Inactive for ${steps.check.outputs.DAYS} days`,
+              body: `## Next Steps\n${steps.check.outputs.NEXT_STEPS || 'Check PRD.md'}`,
+              labels: ['reminder']
+            })

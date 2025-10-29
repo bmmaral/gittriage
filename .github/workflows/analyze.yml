@@ -1,0 +1,39 @@
+name: Analyze Drift
+on:
+  push:
+    paths:
+      - '**.js'
+      - '**.py'
+      - 'PRD.md'
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install nexus
+        run: |
+          pip install click gitpython pyyaml
+          echo "#!/usr/bin/env python3" | sudo tee /usr/local/bin/nexus > /dev/null
+          cat nexus.py | sudo tee -a /usr/local/bin/nexus > /dev/null
+          sudo chmod +x /usr/local/bin/nexus
+
+      - name: Run analysis
+        run: nexus analyze
+
+      - name: Commit report
+        run: |
+          if [ -n "$(git status --porcelain reports/)" ]; then
+            git config user.name "Nexus Bot"
+            git config user.email "nexus@local"
+            git add reports/
+            git commit -m "auto: Drift analysis report"
+            git push
+          fi
