@@ -8,23 +8,80 @@
 </head>
 <body>
   <div class="container">
-    <h1>Nexus Repo Chat</h1>
+    <h1>Nexus Dashboard</h1>
 
-    <div class="controls">
-      <label>
-        Model
-        <select id="model"></select>
-      </label>
-      <label>
-        Repo Path
-        <input id="repo" type="text" placeholder="." value="." />
-      </label>
-    </div>
+    <section class="status">
+      <div class="status-grid">
+        <div class="card">
+          <div class="label">Last Commit</div>
+          <div class="value" id="lastCommit">–</div>
+        </div>
+        <div class="card">
+          <div class="label">Days Inactive</div>
+          <div class="value" id="daysInactive">–</div>
+        </div>
+        <div class="card">
+          <div class="label">Conversations</div>
+          <div class="value" id="convCount">–</div>
+        </div>
+        <div class="card">
+          <div class="label">Drift Report</div>
+          <div class="value" id="driftStatus">–</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="refreshStatus">Refresh</button>
+        <button id="runAnalyze">Run Analyze</button>
+      </div>
+    </section>
 
-    <textarea id="message" placeholder="Ask something about this repo..."></textarea>
-    <button id="send">Send</button>
+    <section class="panels">
+      <div class="panel">
+        <h2>Chat</h2>
+        <div class="controls">
+          <label>
+            Model
+            <select id="model"></select>
+          </label>
+          <label>
+            Repo Path
+            <input id="repo" type="text" placeholder="." value="." />
+          </label>
+        </div>
+        <textarea id="message" placeholder="Ask something about this repo..."></textarea>
+        <button id="send">Send</button>
+        <div id="answer" class="answer"></div>
+      </div>
 
-    <div id="answer" class="answer"></div>
+      <div class="panel">
+        <h2>Timeline</h2>
+        <div class="actions">
+          <button id="refreshTimeline">Refresh Timeline</button>
+        </div>
+        <pre id="timeline" class="mono"></pre>
+      </div>
+
+      <div class="panel">
+        <h2>Drift Report</h2>
+        <div class="actions">
+          <button id="loadDrift">Load Report</button>
+        </div>
+        <pre id="drift" class="mono"></pre>
+      </div>
+
+      <div class="panel">
+        <h2>Import Conversation</h2>
+        <input type="file" id="convFile" accept=".json,.md" />
+        <select id="convPlatform">
+          <option value="">Auto-detect</option>
+          <option>chatgpt</option>
+          <option>claude</option>
+          <option>gemini</option>
+        </select>
+        <button id="importConv">Import</button>
+        <div id="importResult" class="note"></div>
+      </div>
+    </section>
   </div>
 
 <script>
@@ -37,6 +94,31 @@ async function loadModels() {
     opt.value = m; opt.textContent = m;
     sel.appendChild(opt);
   });
+}
+
+async function loadStatus() {
+  const res = await fetch('/api/status');
+  const data = await res.json();
+  document.getElementById('lastCommit').textContent = data.last_commit || '–';
+  document.getElementById('daysInactive').textContent = data.days_since_last_commit ?? '–';
+  document.getElementById('convCount').textContent = data.conversations ?? 0;
+  document.getElementById('driftStatus').textContent = data.drift_report ? 'Available' : 'None';
+}
+
+async function runAnalyze() {
+  const btn = document.getElementById('runAnalyze');
+  btn.disabled = true; btn.textContent = 'Analyzing...';
+  try {
+    const res = await fetch('/api/analyze', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Analyze failed');
+    document.getElementById('drift').textContent = data.report || '(empty)';
+    await loadStatus();
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Run Analyze';
+  }
 }
 
 async function send() {
@@ -61,9 +143,62 @@ async function send() {
   }
 }
 
+async function refreshTimeline() {
+  const pre = document.getElementById('timeline');
+  pre.textContent = 'Loading timeline...';
+  try {
+    const res = await fetch('/api/timeline');
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+    pre.textContent = text;
+  } catch (e) {
+    pre.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function loadDrift() {
+  const pre = document.getElementById('drift');
+  pre.textContent = 'Loading report...';
+  try {
+    const res = await fetch('/api/reports/drift');
+    const text = await res.text();
+    if (!res.ok) throw new Error(text);
+    pre.textContent = text;
+  } catch (e) {
+    pre.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function importConversation() {
+  const file = document.getElementById('convFile').files[0];
+  const platform = document.getElementById('convPlatform').value || '';
+  const out = document.getElementById('importResult');
+  if (!file) { out.textContent = 'Choose a file first.'; return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  if (platform) fd.append('platform', platform);
+  out.textContent = 'Uploading...';
+  try {
+    const res = await fetch('/api/conversations/import', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Import failed');
+    out.textContent = `Imported as ${data.stored_as}`;
+    await loadStatus();
+    await refreshTimeline();
+  } catch (e) {
+    out.textContent = 'Error: ' + e.message;
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   loadModels();
+  loadStatus();
   document.getElementById('send').addEventListener('click', send);
+  document.getElementById('refreshStatus').addEventListener('click', loadStatus);
+  document.getElementById('runAnalyze').addEventListener('click', runAnalyze);
+  document.getElementById('refreshTimeline').addEventListener('click', refreshTimeline);
+  document.getElementById('loadDrift').addEventListener('click', loadDrift);
+  document.getElementById('importConv').addEventListener('click', importConversation);
 });
 </script>
 </body>

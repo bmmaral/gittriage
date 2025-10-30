@@ -4,12 +4,13 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 import httpx
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import git
+from nexus import Nexus
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
@@ -59,9 +60,24 @@ async def status():
         repo = git.Repo(".")
         last_commit = repo.head.commit
         days_ago = (datetime.now() - datetime.fromtimestamp(last_commit.committed_date)).days
+        conv_dir = BASE_DIR / "conversations"
+        conv_count = len(list((conv_dir).glob("*.json"))) if conv_dir.exists() else 0
+        drift_path = BASE_DIR / "reports" / "drift.md"
+        drift_exists = drift_path.exists()
+        recent = []
+        for c in list(repo.iter_commits("HEAD", max_count=5)):
+            recent.append({
+                "sha": c.hexsha[:7],
+                "message": c.message.split("\n")[0],
+                "author": c.author.name,
+                "date": datetime.fromtimestamp(c.committed_date).strftime("%Y-%m-%d %H:%M"),
+            })
         return {
             "last_commit": last_commit.message.split("\n")[0],
             "days_since_last_commit": days_ago,
+            "conversations": conv_count,
+            "drift_report": drift_exists,
+            "recent_commits": recent,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -129,3 +145,57 @@ async def chat(payload: Dict[str, Any]):
     )
 
     return {"answer": content}
+
+
+@app.post("/api/analyze")
+async def run_analyze():
+    try:
+        Nexus().analyze()
+        drift_path = BASE_DIR / "reports" / "drift.md"
+        text = drift_path.read_text() if drift_path.exists() else ""
+        return {"ok": True, "report_path": "reports/drift.md", "report": text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reports/drift", response_class=PlainTextResponse)
+async def get_drift_report():
+    path = BASE_DIR / "reports" / "drift.md"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No drift report")
+    return path.read_text()
+
+
+@app.get("/api/timeline", response_class=PlainTextResponse)
+async def get_timeline():
+    try:
+        Nexus().update_timeline()
+        path = BASE_DIR / "conversations" / "index.md"
+        return path.read_text() if path.exists() else "# Conversation Timeline\n\n(no events)"
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/conversations")
+async def list_conversations():
+    conv_dir = BASE_DIR / "conversations"
+    items: list[dict[str, Any]] = []
+    if conv_dir.exists():
+        for p in sorted(conv_dir.glob("*.json"), key=lambda x: x.name, reverse=True)[:50]:
+            items.append({"name": p.name, "size": p.stat().st_size})
+    return {"count": len(items), "items": items}
+
+
+@app.post("/api/conversations/import")
+async def import_conversation(file: UploadFile = File(...), platform: str | None = Form(default=None)):
+    try:
+        # Save to a temp path and pass to Nexus importer
+        tmp_path = BASE_DIR / "conversations" / (file.filename or "conversation.json")
+        os.makedirs(tmp_path.parent, exist_ok=True)
+        content = await file.read()
+        with open(tmp_path, "wb") as f:
+            f.write(content)
+        Nexus().import_conversation(str(tmp_path), platform)
+        return {"ok": True, "stored_as": str(tmp_path.name)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
