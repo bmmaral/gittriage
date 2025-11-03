@@ -7,18 +7,22 @@ import re
 import stat
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 
 import click
 import git
+import httpx
 import yaml
 
 
 class Nexus:
     def __init__(self) -> None:
+        load_dotenv()
         self.repo = git.Repo('.')
         self.root = Path('.')
         # Configurable conversations directory via env (.env supported by server)
         self.conv_dir = Path(os.getenv('NEXUS_CONVERSATIONS_DIR', 'conversations')).expanduser()
+        self.openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
 
     def init(self) -> None:
         """Initialize nexus in current repo"""
@@ -130,59 +134,119 @@ fi
         # Update timeline
         self.update_timeline()
 
-    def analyze(self) -> None:
+    def _get_git_diff(self, file_path, max_lines=50) -> str:
+        """Return git diff for a file, handling various scenarios."""
+        try:
+            # Check if the file is tracked
+            self.repo.git.ls_files(file_path, error_unmatch=True)
+
+            # Staged changes (for pre-commit analysis)
+            diff_output = self.repo.git.diff('--cached', file_path)
+
+            # Unstaged changes if no staged changes found
+            if not diff_output:
+                diff_output = self.repo.git.diff(file_path)
+
+            # Diff from last commit if no working directory changes
+            if not diff_output:
+                diff_output = self.repo.git.diff('HEAD~1', 'HEAD', '--', file_path)
+
+            return '\n'.join(diff_output.splitlines()[:max_lines])
+
+        except git.exc.GitCommandError:
+            # File is not tracked, return its content as "new file" diff
+            try:
+                content = Path(file_path).read_text(encoding='utf-8', errors='ignore')
+                # Mimic diff format for new files
+                return f"--- /dev/null\n+++ b/{file_path}\n" + '\n'.join([f"+{line}" for line in content.splitlines()[:max_lines]])
+            except FileNotFoundError:
+                return "" # Should not happen if called on existing files
+        except Exception:
+            return "" # Graceful fallback
+
+    def _get_ai_summary(self, file_path: str, diff: str) -> str:
+        """Get AI-powered summary for a diff."""
+        if not self.openrouter_api_key:
+            return "AI summary disabled. Set OPENROUTER_API_KEY in .env file."
+
+        # Simplified prompt construction
+        if 'prd' in file_path.lower():
+            prompt = f"Analyze the following PRD diff for '{file_path}'. Summarize the key changes and their potential impact on the project scope or technical requirements. Focus on strategic implications."
+        elif any(file_path.endswith(ext) for ext in ['.js', '.py', '.ts']):
+            prompt = f"Analyze the following code diff for '{file_path}'. Summarize the functional changes, potential bugs, or improvements. Highlight any new dependencies or architectural modifications."
+        else:
+            prompt = f"Analyze the following diff for '{file_path}'. Provide a concise summary of the changes."
+
+        full_prompt = f"{prompt}\n\n---\n\n{diff}"
+
+        try:
+            response = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.openrouter_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "openrouter/auto",
+                    "messages": [{"role": "user", "content": full_prompt}]
+                },
+                timeout=20.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data['choices'][0]['message']['content'].strip()
+        except httpx.HTTPStatusError as e:
+            return f"Error from AI API: {e.response.status_code}"
+        except Exception:
+            return "Failed to get AI summary."
+
+    def analyze(self, max_files=10) -> None:
         """Analyze code-PRD drift and write reports/drift.md"""
         (Path('reports')).mkdir(exist_ok=True)
         report_lines: list[str] = []
         report_lines.append("# Code-PRD Drift Report\n")
         report_lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
 
-        prd_content = Path('PRD.md').read_text(encoding='utf-8', errors='ignore') if Path('PRD.md').exists() else ''
+        # Prioritize PRD, then source files, then config files
+        prds = sorted(Path('.').glob('prd*.md'), key=lambda p: p.stat().st_mtime, reverse=True)
+        source_files = sorted(Path('.').rglob('*.js'), key=lambda p: p.stat().st_mtime, reverse=True)
+        config_files = sorted(Path('.').rglob('*.yml'), key=lambda p: p.stat().st_mtime, reverse=True)
 
-        # Endpoints listed in PRD
-        prd_endpoints = set(re.findall(r'(?:GET|POST|PUT|DELETE)\s+(/api/\S+)', prd_content, flags=re.IGNORECASE))
-        prd_endpoints |= set(re.findall(r'(/api/\S+)', prd_content))
+        # Combine and limit files to analyze
+        files_to_analyze = [str(p) for p in prds + source_files + config_files][:max_files]
 
-        # Actual endpoints in code (very simple Express-like scan)
-        code_endpoints: list[tuple[str, str, str]] = []  # (method, endpoint, file)
-        for file in Path('.').rglob('*.js'):
-            try:
-                content = file.read_text(errors='ignore')
-            except Exception:
-                continue
-            for match in re.findall(r'app\.(get|post|put|delete)\([\'\"](\S+)[\'\"]', content, flags=re.IGNORECASE):
-                method, endpoint = match
-                code_endpoints.append((method.upper(), endpoint, str(file)))
+        analysis_items = []
+        for file in files_to_analyze:
+            diff = self._get_git_diff(file)
+            if diff:
+                analysis_items.append({'file': file, 'diff': diff})
 
-        undocumented = [(m, e, f) for (m, e, f) in code_endpoints if e not in prd_endpoints]
+        # Simple heuristic: if PRD changed, it's high priority
+        priority_items = [item for item in analysis_items if 'prd' in item['file'].lower()]
+        other_items = [item for item in analysis_items if 'prd' not in item['file'].lower()]
 
-        if undocumented:
-            report_lines.append("## 🔴 Undocumented Endpoints\n\n")
-            for method, endpoint, file in undocumented:
-                report_lines.append(f"- `{method} {endpoint}` in `{file}`\n")
+        report_lines.append("## 🤖 AI-Generated Analysis\n\n")
 
-        # Recent AI commits
-        recent_commits = list(self.repo.iter_commits('HEAD', max_count=20))
-        ai_commits = [c for c in recent_commits if any(ai in c.message.lower() for ai in ['cursor', 'copilot', 'ai'])]
-        if ai_commits:
-            report_lines.append("\n## 🤖 Recent AI Changes\n\n")
-            for commit in ai_commits[:5]:
-                message_lines = commit.message.splitlines()
-                summary = message_lines[0] if message_lines else ''
-                report_lines.append(f"- {commit.hexsha[:7]}: {summary}\n")
+        for item in priority_items + other_items:
+            file, diff = item['file'], item['diff']
+            summary = self._get_ai_summary(file, diff)
+
+            report_lines.append(f"### `{file}`\n")
+            report_lines.append(f"**💡 AI Summary:** {summary}\n")
+            report_lines.append("```diff\n")
+            report_lines.append(diff + "\n")
+            report_lines.append("```\n\n")
 
         report_text = ''.join(report_lines)
-        # Write UTF-8 as the report includes emoji markers
         Path('reports/drift.md').write_text(report_text, encoding='utf-8')
 
-        issue_count = len(undocumented) + len(ai_commits)
-        click.echo(f"🔍 Analysis complete: {issue_count} issues found")
+        issue_count = len(analysis_items)
+        click.echo(f"🔍 Analysis complete: {issue_count} files analyzed")
 
         if issue_count > 0:
-            # Best-effort commit
             try:
                 self.repo.index.add(['reports/drift.md'])
-                self.repo.index.commit(f"analyze: {issue_count} drift issues detected")
+                self.repo.index.commit(f"analyze: AI summary for {issue_count} changed files")
             except Exception:
                 pass
 
