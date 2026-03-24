@@ -1,4 +1,10 @@
 # ----------------------
+# Rust (Nexus v2 CLI)
+# ----------------------
+target/
+nexus-plan.json
+
+# ----------------------
 # Node / TypeScript
 # ----------------------
 node_modules/

@@ -1,149 +1,70 @@
-# Project Nexus (Lightweight)
+# Nexus
 
-Dead-simple, Git-native project memory tool with a minimal CLI, a tiny API + dashboard for repo chat via OpenRouter, and a few GitHub Actions to keep projects active and in-sync with your PRD.
+This repository is transitioning to **Nexus v2**: a local-first **repository fleet intelligence** CLI (Rust) that inventories local and GitHub repos, resolves identity clusters, scores them, and emits a deterministic plan—without mutating your trees.
 
-## Requirements
-- Python 3.11+
-- Git installed and repository initialized (`.git` present)
-- pip packages from `requirements.txt`:
-  - click, GitPython, PyYAML
-  - fastapi, uvicorn, httpx, jinja2
-- Optional (for chat): `OPENROUTER_API_KEY` environment variable
+See `docs/ARCHITECTURE.md`, `docs/SCORING.md`, `docs/CLI.md`, and `TODO.md`.
 
-## Install
-```bash
-# From repo root
-pip install -r requirements.txt
-```
+## Nexus v2 (Rust CLI)
 
-## CLI Quick Start
-The CLI lives in `nexus.py`.
+### Requirements
+
+- [Rust](https://rustup.rs/) stable (see `rust-toolchain.toml`)
+- **C toolchain for build scripts:** on macOS, **Xcode Command Line Tools** (`xcode-select --install`); on Linux, `build-essential` (or your distro’s equivalent) so `cc` can compile SQLite for `rusqlite`.
+- `git` on `PATH` (for repo metadata)
+- Optional: `gh` CLI (for `scan` with `--github-owner`)
+
+### Build and run
 
 ```bash
-# Initialize directories and hooks in the current repo
-python nexus.py init
-
-# Import an AI conversation export (ChatGPT/Claude/Gemini JSON)
-python nexus.py import-conv ~/Downloads/chatgpt-export.json
-
-# Show quick status summary
-python nexus.py status
-
-# Analyze PRD vs code drift and write reports/drift.md
-python nexus.py analyze
-
-# Update conversations timeline (conversations/index.md)
-python nexus.py timeline
+cargo build -p nexus-cli
+cargo run -p nexus-cli -- doctor
 ```
 
-Recommended: symlink to your PATH for the convenience command `nexus`.
+Optional: [just](https://github.com/casey/just) recipes mirror these commands (`just test`, `just build`, `just doctor`, …).
+
+The CLI binary name is **`nexus`** (`target/debug/nexus` or `target/release/nexus` on the host triple; cross-compiles land under `target/<triple>/…`).
+
+### Commands
+
 ```bash
-sudo cp nexus.py /usr/local/bin/nexus && sudo chmod +x /usr/local/bin/nexus
-nexus init
+nexus scan ~/Projects ~/code --github-owner your-github-login
+nexus plan --write nexus-plan.json
+nexus report --format md
+nexus apply --dry-run
+nexus doctor
+nexus tools
+nexus serve --port 3030
 ```
 
-## API + Dashboard (Repo Chat via OpenRouter)
-A tiny FastAPI server provides:
-- GET `/` – simple dashboard UI
-- GET `/api/status` – last commit info
-- GET `/api/models` – available model list
-- POST `/api/chat` – send a question with optional model and repo path
+Configuration precedence is documented in `docs/CLI.md`. Example file: `nexus.toml.example`.
 
-### Run the server
-```bash
-# Set your OpenRouter API key
-export OPENROUTER_API_KEY=YOUR_KEY
-# Optional branding (helps OpenRouter telemetry)
-export OPENROUTER_HTTP_REFERER=http://localhost:8000
-export OPENROUTER_APP_NAME=Nexus
+### Crate layout
 
-# Start the API server
-uvicorn server:app --reload --port 8000
-# Open http://localhost:8000
-```
+| Crate | Role |
+| --- | --- |
+| `nexus-core` | Domain types |
+| `nexus-config` | Config loading |
+| `nexus-db` | SQLite persistence |
+| `nexus-scan` | Filesystem scan |
+| `nexus-git` | Git metadata |
+| `nexus-github` | `gh` ingest |
+| `nexus-plan` | Clustering & scoring |
+| `nexus-report` | Markdown / JSON reports |
+| `nexus-adapters` | Optional jscpd / semgrep / gitleaks / syft CLI hooks |
+| `nexus-api` | Axum JSON API (`serve`) |
+| `nexus-cli` | CLI entrypoint |
 
-### Chat request payload
-```json
-{
-  "message": "What endpoints are implemented vs PRD?",
-  "model": "openrouter/auto",             // optional
-  "repo_path": "."                         // optional, defaults to current repo
-}
-```
+---
 
-### Notes
-- Context includes `PRD.md` (truncated) + last ~10 commits.
-- No code is uploaded; only the PRD and commit metadata are used for the prompt context.
+## Legacy stack (Python + TypeScript)
 
-## GitHub Actions and Cron Jobs
-This repo includes minimal but useful workflows under `.github/workflows/`:
+The tree still contains the earlier **project-memory** experiment: Python CLI (`nexus.py`), FastAPI dashboard (`server.py`), and a TypeScript CLI under `cli/`. These are **not** the v2 product; they remain for reference and gradual retirement. To tag that era on a commit: `scripts/tag-legacy-python.sh` (see script header).
 
-- `analyze.yml` (on push + manual):
-  - Installs the CLI and runs `nexus analyze`
-  - Commits `reports/drift.md` if there are changes
+- Python: `pip install -r requirements.txt`, `python nexus.py --help`
+- TS CLI: `cd cli && npm install && npm run build`
 
-- `reminder.yml` (daily 09:00 UTC + manual):
-  - Detects inactivity (≥5 days)
-  - Opens a reminder issue with PRD "Next Steps" if present
-
-- `weekly-summary.yml` (Mondays 08:00 UTC + manual):
-  - Generates `reports/weekly-summary.md` with recent commits, conversations, and drift snapshot
-  - Opens a summary issue
-
-- `nightly-health.yml` (daily 03:00 UTC + manual):
-  - Optional quick `nexus analyze`
-  - Opens a drift issue if high-level drift is detected
-
-- `stale-branches.yml` (Sundays 06:00 UTC + manual):
-  - Lists remote branches with no commits in 30+ days
-  - Opens a maintenance issue to review/clean up
-
-## Roadmap (from PRD2, adapted for lightweight scope)
-- MVP hardening
-  - Improve PRD change summarization in commit messages
-  - Expand endpoint detection beyond simple Express patterns
-  - Add TypeScript/Python AST checks for better drift reports
-- Conversation intelligence
-  - Decision extraction with richer patterns and confidence scoring
-  - Optional import of Markdown transcripts
-- Repo chat enhancements
-  - Model list fetched from OpenRouter dynamically
-  - Add file/dir scoping and “include snippet” support in prompts
-  - Persist Q&A to `conversations/` as JSONL
-- Automation
-  - Auto-close inactivity issues when new commits land
-  - Weekly trend charts in summaries (issues, commits, drift count)
-- Reuse scout (post-MVP)
-  - TF-IDF + AST signatures for module similarity
-  - Update `PRD.md` with reuse suggestions and copy commands
-
-## Implemented PRD2 elements in this repo
-- Git-native design: conversations, reports, PRD live in the repo
-- CLI: `init`, `import-conv`, `status`, `analyze`, `timeline`, `prd-summary`
-- Hooks: pre-commit enhancement for PRD summaries (idempotent)
-- Actions: analyzer, inactivity reminder, weekly summary, nightly health, stale-branches
-- Web: simple dashboard + OpenRouter-powered chat about the current repo
-
-## Configuration
-- `.nexus/config.yml` (auto-created on `init`):
-```yaml
-reminder_days: 5
-auto_commit: true
-analyze_on_push: true
-ignore_patterns:
-  - node_modules
-  - .env
-  - build/
-```
-
-## Security & Privacy
-- The server never uploads your codebase; it includes only `PRD.md` text and commit metadata as context for chat.
-- You control the OpenRouter API key via environment variable.
-
-## Troubleshooting
-- CLI cannot find git repository: run `git init` first.
-- Drift report empty: ensure `PRD.md` contains an “API Endpoints” section or endpoint-like patterns, and your code defines endpoints supported by the simple scanner.
-- Chat 400 error: set `OPENROUTER_API_KEY` in your shell before starting the server.
+---
 
 ## License
+
 MIT

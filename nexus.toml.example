@@ -1,0 +1,14 @@
+db_path = ".nexus/state.db"
+default_roots = ["~/Projects", "~/code"]
+github_owner = "your-github-login"
+include_hidden = false
+
+[scan]
+respect_gitignore = true
+max_readme_bytes = 16384
+max_hash_files = 64
+
+[planner]
+archive_duplicate_threshold = 80
+oss_candidate_threshold = 70
+ambiguous_cluster_threshold = 55

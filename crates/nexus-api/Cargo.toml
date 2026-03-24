@@ -1,0 +1,14 @@
+[package]
+name = "nexus-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+nexus-db = { path = "../nexus-db" }
+nexus-plan = { path = "../nexus-plan" }
+serde_json.workspace = true
+tokio.workspace = true
+tower-http.workspace = true

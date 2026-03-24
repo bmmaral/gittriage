@@ -1,0 +1,15 @@
+[package]
+name = "nexus-plan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+nexus-core = { path = "../nexus-core" }
+nexus-git = { path = "../nexus-git" }

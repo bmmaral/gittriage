@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-03-24T12:00:00Z",
+  "generated_by": "nexus 0.1.0",
+  "clusters": [
+    {
+      "cluster": {
+        "id": "cluster-001",
+        "cluster_key": "url:github.com/demo/repo",
+        "label": "demo",
+        "status": "Resolved",
+        "confidence": 0.91,
+        "canonical_clone_id": "clone-001",
+        "canonical_remote_id": "remote-001",
+        "members": [
+          { "kind": "Clone", "id": "clone-001" },
+          { "kind": "Remote", "id": "remote-001" }
+        ],
+        "evidence": [
+          {
+            "id": "ev-001",
+            "subject_kind": "Clone",
+            "subject_id": "clone-001",
+            "kind": "remote_url_match",
+            "score_delta": 25.0,
+            "detail": "matched origin"
+          }
+        ],
+        "scores": {
+          "canonical": 91.0,
+          "usability": 68.0,
+          "oss_readiness": 42.0,
+          "risk": 29.0
+        }
+      },
+      "actions": [
+        {
+          "id": "action-001",
+          "priority": "High",
+          "action_type": "ArchiveLocalDuplicate",
+          "target_kind": "Clone",
+          "target_id": "clone-002",
+          "reason": "Older duplicate with lower canonical score",
+          "commands": []
+        }
+      ]
+    }
+  ]
+}

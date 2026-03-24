@@ -1,0 +1,17 @@
+[package]
+name = "nexus-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+
+nexus-core = { path = "../nexus-core" }
+
+[dev-dependencies]
+chrono.workspace = true
+tempfile = "3"
