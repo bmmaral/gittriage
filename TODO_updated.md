@@ -114,7 +114,7 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 
 ### Core CLI polish
 - [x] Ensure `scan -> score -> plan -> report` is the documented golden path (`README.md`, `docs/CLI.md`)
-- [ ] Add consistent machine-readable output options where needed
+- [x] Add consistent machine-readable output options where needed (`doctor --format json`, `apply --dry-run --format json`; `score` / `report` / `export` already JSON-capable)
 - [x] Improve `doctor` output with actionable remediation
 - [x] Improve `report` readability for large inventories (score labels, explanations, action sub-bullets)
 - [x] Add clear warning language for ambiguous plans and low-confidence scores (report **Warnings** section)

@@ -16,6 +16,24 @@ fn doctor_succeeds() {
 }
 
 #[test]
+fn doctor_json_succeeds() {
+    let output = Command::new(nexus_exe())
+        .args(["doctor", "--format", "json"])
+        .output()
+        .expect("spawn nexus doctor --format json");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("nexus_doctor") && stdout.contains("database"),
+        "doctor json: {stdout}"
+    );
+}
+
+#[test]
 fn scan_score_plan_report_json_pipeline() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = dir.path().join("state.db");
@@ -106,5 +124,28 @@ fn scan_score_plan_report_json_pipeline() {
     assert!(
         stdout.contains("clusters"),
         "report json should mention clusters: {stdout}"
+    );
+
+    let apply_out = Command::new(nexus_exe())
+        .current_dir(dir.path())
+        .args([
+            "--config",
+            cfg.to_str().unwrap(),
+            "apply",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("apply");
+    assert!(
+        apply_out.status.success(),
+        "apply stderr: {}",
+        String::from_utf8_lossy(&apply_out.stderr)
+    );
+    let apply_stdout = String::from_utf8_lossy(&apply_out.stdout);
+    assert!(
+        apply_stdout.contains("nexus_apply_dry_run") && apply_stdout.contains("action_count"),
+        "apply json: {apply_stdout}"
     );
 }

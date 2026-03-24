@@ -10,7 +10,7 @@ These commands are the **intended stable surface** for repo fleet triage (names 
 | `score` | Compute **scores and evidence** per cluster (stdout only; does not persist a plan) |
 | `plan` | Build clusters, scores, evidence, and **prioritized actions**; write `plan.json`; persist plan to SQLite |
 | `report` | Render markdown or JSON from the current inventory (plan recomputed in-process) |
-| `doctor` | Environment, toolchain, and DB checks |
+| `doctor` | Environment, toolchain, and DB checks (`--format json` for scripts) |
 | `tools` | Optional external adapters on `PATH` |
 | `export` | JSON envelope with `inventory` (optional `--with-plan`) for backup or transfer |
 | `import` | Replace DB inventory from export JSON (clears persisted plan); requires `--force` |
@@ -20,7 +20,7 @@ These commands are the **intended stable surface** for repo fleet triage (names 
 
 | Command | Purpose |
 | --- | --- |
-| `apply --dry-run` | Read-only preview: counts clusters and proposed actions. **Mutating apply is not implemented**; omitting `--dry-run` exits with an error. Stays as the v1 preview mechanism (not folded into `plan`/`report`). |
+| `apply --dry-run` | Read-only preview: counts clusters and proposed actions (`--format json` supported). **Mutating apply is not implemented**; omitting `--dry-run` exits with an error. Stays as the v1 preview mechanism (not folded into `plan`/`report`). |
 | `serve` | **Experimental** read-only JSON over local SQLite for scripting. **Not** a dashboard, not multi-user, **unstable API** until release notes say otherwise. May move behind a feature flag later; default product remains the CLI. |
 
 New subcommands (e.g. `tui`) may be added alongside the core without removing these in v1.x.
@@ -98,20 +98,28 @@ nexus report --format json
 
 Validate environment and dependencies.
 
+- `--format text` (default) — human-readable lines and tips.
+- `--format json` — machine-readable document with `kind: "nexus_doctor"`, config paths, DB open/sqlite status, `path_tools` (`git`, `gh`, `cc`), optional scanner map, and `rustc_version` when available.
+
 Example:
 
 ```bash
 nexus doctor
+nexus doctor --format json
 ```
 
 ### `nexus apply --dry-run`
 
 Lists how many clusters/actions would be considered. v1 does not mutate repos; omitting `--dry-run` exits with an error.
 
+- `--format text` (default) — one-line summary.
+- `--format json` — `kind: "nexus_apply_dry_run"` with `cluster_count`, `action_count`, and `scoring_rules_version` (only with `--dry-run`).
+
 Example:
 
 ```bash
 nexus apply --dry-run
+nexus apply --dry-run --format json
 ```
 
 ### `nexus serve` (experimental)

@@ -58,11 +58,16 @@ enum Commands {
         #[arg(long, default_value = "md")]
         format: ReportFormat,
     },
-    Doctor,
+    Doctor {
+        #[arg(long, default_value = "text")]
+        format: DoctorFormat,
+    },
     /// Preview how many actions would apply. v1 is read-only: pass `--dry-run` only (mutating apply is not implemented).
     Apply {
         #[arg(long)]
         dry_run: bool,
+        #[arg(long, default_value = "text")]
+        format: ApplyFormat,
     },
     /// Experimental: read-only JSON API over SQLite for local inspection. Not a dashboard and not a stable public API yet.
     Serve {
@@ -110,6 +115,20 @@ enum ReportFormat {
 }
 
 #[derive(Debug, Clone, ValueEnum)]
+enum DoctorFormat {
+    Text,
+    /// Stable JSON for scripts (`kind: "nexus_doctor"`).
+    Json,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum ApplyFormat {
+    Text,
+    /// JSON summary when used with `--dry-run` (`kind: "nexus_apply_dry_run"`).
+    Json,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
 enum ScoreFormat {
     /// One block per cluster: headline scores and evidence count.
     Text,
@@ -142,8 +161,8 @@ fn main() -> Result<()> {
             external,
         } => cmd_plan(&mut db, &write, no_merge_base, external),
         Commands::Report { format } => cmd_report(&db, format),
-        Commands::Doctor => cmd_doctor(&bundle),
-        Commands::Apply { dry_run } => cmd_apply(&db, dry_run),
+        Commands::Doctor { format } => cmd_doctor(&bundle, format),
+        Commands::Apply { dry_run, format } => cmd_apply(&db, dry_run, format),
         Commands::Serve { port } => {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -477,7 +496,7 @@ fn cmd_tools() {
     }
 }
 
-fn cmd_apply(db: &Database, dry_run: bool) -> Result<()> {
+fn cmd_apply(db: &Database, dry_run: bool, format: ApplyFormat) -> Result<()> {
     anyhow::ensure!(
         dry_run,
         "v1 is plan-only: use `nexus apply --dry-run` (mutating apply is disabled)"
@@ -485,101 +504,170 @@ fn cmd_apply(db: &Database, dry_run: bool) -> Result<()> {
     let snapshot = db.load_inventory()?;
     let plan = nexus_plan::build_plan(&snapshot)?;
     let actions: usize = plan.clusters.iter().map(|cp| cp.actions.len()).sum();
-    println!(
-        "apply --dry-run: {} clusters, {actions} proposed actions (no changes made)",
-        plan.clusters.len()
-    );
+    let n_clusters = plan.clusters.len();
+    match format {
+        ApplyFormat::Text => {
+            println!(
+                "apply --dry-run: {n_clusters} clusters, {actions} proposed actions (no changes made)",
+            );
+        }
+        ApplyFormat::Json => {
+            let doc = serde_json::json!({
+                "schema_version": 1,
+                "kind": "nexus_apply_dry_run",
+                "dry_run": true,
+                "cluster_count": n_clusters,
+                "action_count": actions,
+                "scoring_rules_version": plan.scoring_rules_version,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
+        }
+    }
     Ok(())
 }
 
-fn cmd_doctor(bundle: &ConfigBundle) -> Result<()> {
+fn cmd_doctor(bundle: &ConfigBundle, format: DoctorFormat) -> Result<()> {
     let config = &bundle.config;
-    println!(
-        "config file: {}",
-        bundle
-            .source_path
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "(defaults — no nexus.toml found)".into())
-    );
-    if bundle.source_path.is_none() {
-        println!(
-            "  → tip: copy `nexus.toml.example` to `./nexus.toml` or set `{}`",
-            nexus_config::ENV_NEXUS_CONFIG
-        );
-    }
-    println!("db_path (config): {}", config.db_path.display());
-    println!(
-        "db_path (effective): {}",
-        bundle.effective_db_path.display()
-    );
+    let config_source = bundle.source_path.as_ref().map(|p| p.display().to_string());
 
-    match Database::open(&bundle.effective_db_path) {
-        Ok(db) => {
-            match db.sqlite_version() {
-                Ok(version) => println!("sqlite: {version}"),
-                Err(e) => println!("sqlite version: unavailable ({e:#})"),
-            }
-            println!("db open: ok");
-        }
-        Err(e) => {
-            println!("db open: FAILED ({e:#})");
-            println!(
-                "  → fix: ensure the parent directory exists and is writable; check `db_path` in config"
-            );
-            println!("  → see: docs/CONFIG.md");
-        }
-    }
-
-    println!("default roots: {:?}", config.default_roots);
-    if config.default_roots.is_empty() {
-        println!(
-            "  → tip: set `default_roots` in nexus.toml or pass paths to `nexus scan <path> ...`"
-        );
-    }
+    let (db_open_ok, sqlite_version, sqlite_query_error, db_open_error) =
+        match Database::open(&bundle.effective_db_path) {
+            Ok(db) => match db.sqlite_version() {
+                Ok(version) => (true, Some(version), None, None),
+                Err(e) => (true, None, Some(format!("{e:#}")), None),
+            },
+            Err(e) => (false, None, None, Some(format!("{e:#}"))),
+        };
 
     let gh_ok = which::which("gh").is_ok();
-    println!("gh in PATH: {gh_ok}");
-    if !gh_ok {
-        println!(
-            "  → optional: install GitHub CLI for `scan --github-owner` (docs/EXTERNAL_TOOLS.md)"
-        );
-    }
     let git_ok = which::which("git").is_ok();
-    println!("git in PATH: {git_ok}");
-    if !git_ok {
-        println!("  → fix: install git; Nexus uses it for clone metadata and merge-base evidence");
-    }
-    match std::process::Command::new("cc").arg("--version").output() {
-        Ok(out) if out.status.success() => println!("cc (C linker): ok"),
-        _ => {
-            println!("cc (C linker): missing or not functional");
-            #[cfg(target_os = "macos")]
-            println!("  → fix: install Xcode CLT (`xcode-select --install`) so `cargo` / rusqlite can link");
-            #[cfg(not(target_os = "macos"))]
-            println!("  → fix: install a C toolchain (e.g. build-essential, clang) for rusqlite");
-        }
-    }
-    let scanners: Vec<_> = nexus_adapters::probe_all()
-        .into_iter()
-        .filter(|(_, ok)| *ok)
-        .map(|(t, _)| t.bin_name())
-        .collect();
-    let scanner_line = if scanners.is_empty() {
-        "(none)".to_string()
-    } else {
-        scanners.join(", ")
-    };
-    println!("external scanners on PATH: {scanner_line}");
-    if scanners.is_empty() {
-        println!("  → optional: install tools listed in `nexus tools` for `plan --external`");
-    }
-    if let Ok(ver) = std::process::Command::new("rustc")
+    let cc_ok = matches!(
+        std::process::Command::new("cc").arg("--version").output(),
+        Ok(out) if out.status.success()
+    );
+
+    let rustc_version = std::process::Command::new("rustc")
         .arg("--version")
         .output()
-    {
-        if ver.status.success() {
-            println!("rustc: {}", String::from_utf8_lossy(&ver.stdout).trim_end());
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    let optional_scanners: serde_json::Map<String, serde_json::Value> = nexus_adapters::probe_all()
+        .into_iter()
+        .map(|(t, ok)| (t.bin_name().to_string(), serde_json::json!(ok)))
+        .collect();
+
+    match format {
+        DoctorFormat::Json => {
+            let doc = serde_json::json!({
+                "schema_version": 1,
+                "kind": "nexus_doctor",
+                "generated_at": Utc::now().to_rfc3339(),
+                "generated_by": format!("nexus {}", env!("CARGO_PKG_VERSION")),
+                "config_source": config_source,
+                "db_path_config": config.db_path.display().to_string(),
+                "db_path_effective": bundle.effective_db_path.display().to_string(),
+                "default_roots": config.default_roots,
+                "database": {
+                    "open_ok": db_open_ok,
+                    "sqlite_version": sqlite_version,
+                    "sqlite_query_error": sqlite_query_error,
+                    "open_error": db_open_error,
+                },
+                "path_tools": {
+                    "git": git_ok,
+                    "gh": gh_ok,
+                    "cc": cc_ok,
+                },
+                "rustc_version": rustc_version,
+                "optional_scanners_on_path": optional_scanners,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
+        }
+        DoctorFormat::Text => {
+            println!(
+                "config file: {}",
+                config_source
+                    .as_deref()
+                    .unwrap_or("(defaults — no nexus.toml found)")
+            );
+            if bundle.source_path.is_none() {
+                println!(
+                    "  → tip: copy `nexus.toml.example` to `./nexus.toml` or set `{}`",
+                    nexus_config::ENV_NEXUS_CONFIG
+                );
+            }
+            println!("db_path (config): {}", config.db_path.display());
+            println!(
+                "db_path (effective): {}",
+                bundle.effective_db_path.display()
+            );
+
+            if db_open_ok {
+                if let Some(ref v) = sqlite_version {
+                    println!("sqlite: {v}");
+                } else if let Some(ref e) = sqlite_query_error {
+                    println!("sqlite version: unavailable ({e})");
+                }
+                println!("db open: ok");
+            } else if let Some(ref e) = db_open_error {
+                println!("db open: FAILED ({e})");
+                println!(
+                    "  → fix: ensure the parent directory exists and is writable; check `db_path` in config"
+                );
+                println!("  → see: docs/CONFIG.md");
+            }
+
+            println!("default roots: {:?}", config.default_roots);
+            if config.default_roots.is_empty() {
+                println!(
+                    "  → tip: set `default_roots` in nexus.toml or pass paths to `nexus scan <path> ...`"
+                );
+            }
+
+            println!("gh in PATH: {gh_ok}");
+            if !gh_ok {
+                println!(
+                    "  → optional: install GitHub CLI for `scan --github-owner` (docs/EXTERNAL_TOOLS.md)"
+                );
+            }
+            println!("git in PATH: {git_ok}");
+            if !git_ok {
+                println!(
+                    "  → fix: install git; Nexus uses it for clone metadata and merge-base evidence"
+                );
+            }
+            if cc_ok {
+                println!("cc (C linker): ok");
+            } else {
+                println!("cc (C linker): missing or not functional");
+                #[cfg(target_os = "macos")]
+                println!("  → fix: install Xcode CLT (`xcode-select --install`) so `cargo` / rusqlite can link");
+                #[cfg(not(target_os = "macos"))]
+                println!(
+                    "  → fix: install a C toolchain (e.g. build-essential, clang) for rusqlite"
+                );
+            }
+            let scanners: Vec<_> = nexus_adapters::probe_all()
+                .into_iter()
+                .filter(|(_, ok)| *ok)
+                .map(|(t, _)| t.bin_name())
+                .collect();
+            let scanner_line = if scanners.is_empty() {
+                "(none)".to_string()
+            } else {
+                scanners.join(", ")
+            };
+            println!("external scanners on PATH: {scanner_line}");
+            if scanners.is_empty() {
+                println!(
+                    "  → optional: install tools listed in `nexus tools` for `plan --external`"
+                );
+            }
+            if let Some(v) = rustc_version {
+                println!("rustc: {v}");
+            }
         }
     }
     Ok(())
