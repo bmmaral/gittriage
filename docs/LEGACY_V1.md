@@ -13,7 +13,7 @@ The first Nexus experiments lived in this repository as a **project-memory** sta
 The supported product is the Rust workspace under `crates/`:
 
 - Install Rust (see `README.md` and `rust-toolchain.toml`).
-- Use `nexus scan`, `nexus plan`, `nexus report` against a local SQLite DB (see `nexus.toml.example` and `docs/CONFIG.md`).
+- Use `nexus scan`, `nexus score`, `nexus plan`, `nexus report` against a local SQLite DB (see `nexus.toml.example` and `docs/CONFIG.md`).
 - There is **no** automatic importer from v1 conversation or config formats; treat v1 as historical reference only.
 
 ## Historical PRD

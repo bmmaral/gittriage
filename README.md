@@ -1,10 +1,16 @@
 # Nexus
 
-**Nexus** is a local-first **repository fleet intelligence** CLI: it scans directories for git repos, ingests GitHub metadata (via `gh`), groups clones and remotes into **clusters**, scores them, and writes a deterministic **plan**—without modifying your working trees.
+**Nexus** is a **local-first, Rust-first CLI for repo fleet triage**: it inventories directories for git repos, ingests GitHub metadata (via `gh`), groups clones and remotes into **clusters**, scores them, and writes a deterministic **plan**—without modifying your working trees.
 
-**Before:** dozens of checkouts and remotes with unclear “source of truth,” risky for humans and agents. **After:** one SQLite-backed inventory, a reproducible `plan.json`, and human-readable reports you can diff and review.
+**Before:** dozens of checkouts and remotes with unclear “source of truth,” risky for humans and agents. **After:** one SQLite-backed inventory, reproducible scores and a `plan.json`, and human-readable reports you can diff and review.
 
-See `docs/ARCHITECTURE.md`, `docs/SCORING.md`, `docs/CLI.md`, `docs/PLAN_SCHEMA.md`, `docs/CONFIG.md`, `docs/EXTERNAL_TOOLS.md`, and `TODO.md`.
+This is **not** a web dashboard or internal developer portal; the product stays lightweight and deterministic. An optional **TUI** and **optional AI** explanations may come later; they do not define the core engine.
+
+**Who it’s for:** solo developers, freelancers, small teams, and AI-heavy workflows with lots of local clones—anyone who needs **which repos matter**, **which copy is canonical**, and **what to do next**, without platform overhead.
+
+**Who it’s not for:** enterprises wanting a hosted catalog, approval workflows, or compliance-first buying—those are different products.
+
+Docs: [`docs/PRODUCT_STRATEGY.md`](docs/PRODUCT_STRATEGY.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SCORING.md`](docs/SCORING.md), [`docs/CLI.md`](docs/CLI.md), [`docs/PLAN_SCHEMA.md`](docs/PLAN_SCHEMA.md), [`docs/CONFIG.md`](docs/CONFIG.md), [`docs/EXTERNAL_TOOLS.md`](docs/EXTERNAL_TOOLS.md), [`docs/FAQ.md`](docs/FAQ.md). Backlog: [`TODO_updated.md`](TODO_updated.md) (current), [`TODO.md`](TODO.md) (earlier tracker).
 
 ## Install / build
 
@@ -22,11 +28,12 @@ Or debug: `cargo build -p nexus-cli` → `target/debug/nexus`.
 
 Optional: [just](https://github.com/casey/just) recipes (`just test`, `just build`, …).
 
-## Example workflow
+## Golden path (documented workflow)
 
 ```bash
 cp nexus.toml.example nexus.toml   # edit db_path / default_roots / github_owner
 nexus scan ~/Projects --github-owner your-login
+nexus score --format text          # scores + evidence (stdout only; does not persist plan)
 nexus plan --write nexus-plan.json
 nexus report --format md
 nexus apply --dry-run
@@ -34,21 +41,22 @@ nexus doctor
 nexus tools
 ```
 
-**Sample `report` output shape (markdown):** title `Nexus Report`, generated metadata, then per cluster sections with scores, evidence bullets, and proposed actions (descriptive only in v0).
+**Sample `report` output shape (markdown):** title `Nexus Report`, run metadata, then per cluster: scores, evidence, proposed actions (descriptive only; no automatic mutations).
 
-**`plan.json`:** includes `schema_version: 1`; full field list in `docs/PLAN_SCHEMA.md`.
+**`plan.json`:** `schema_version: 1`; fields in `docs/PLAN_SCHEMA.md`.
 
-## Commands (v0)
+## Commands (stable core + helpers)
 
 | Command | Role |
 | --- | --- |
 | `scan` | Discover local repos; optional GitHub ingest |
-| `plan` | Resolve clusters, score, write JSON plan |
-| `report` | Markdown or JSON from current inventory |
+| `score` | Compute scores and evidence from inventory (text or JSON; does not write plan file or persist plan row) |
+| `plan` | Resolve clusters, score, attach actions; write JSON plan; persist plan to SQLite |
+| `report` | Markdown or JSON from a fresh plan built from inventory |
 | `doctor` | Environment and DB sanity |
-| `apply --dry-run` | Count proposed actions (no mutations) |
 | `tools` | Which optional scanners are on `PATH` |
-| `serve` | **Experimental** read-only JSON API (local use) |
+| `apply --dry-run` | Count proposed actions (read-only preview; mutating apply disabled) |
+| `serve` | **Experimental** read-only JSON API over local SQLite (not a dashboard; unstable API) |
 
 ## Crate layout
 
@@ -63,18 +71,19 @@ nexus tools
 | `nexus-plan` | Clustering & scoring |
 | `nexus-report` | Markdown / JSON |
 | `nexus-adapters` | Optional tool hooks |
-| `nexus-api` | Axum API for `serve` |
+| `nexus-api` | Axum API for `serve` (experimental) |
 | `nexus-cli` | CLI entrypoint |
 
-## Limitations / non-goals (v0)
+## Limitations / non-goals (v1)
 
-- No automatic delete/move/archive of repos; no commits or PRs from the tool.
-- Scoring and clustering are heuristics—always review `plan` and `report` for high-stakes decisions.
+- No web dashboard; no automatic delete/move/archive of repos; no commits or PRs from the tool.
+- Scoring and clustering are heuristics—review `plan` and `report` for high-stakes decisions.
 - `serve` is experimental; do not rely on it as a stable public API yet.
+- Core usefulness does **not** depend on AI.
 
 ## Legacy v1
 
-Python/TypeScript prototypes are **not** on `main`. They are preserved on branch `legacy/v1-python-ts` and can be tagged with `scripts/tag-legacy-python.sh` (`legacy-py-mvp`). Details: `docs/LEGACY_V1.md`.
+Python/TypeScript prototypes are **not** on `main`. They are preserved on branch `legacy/v1-python-ts` and tag `legacy-py-mvp`. Details: `docs/LEGACY_V1.md`.
 
 ## License
 

@@ -4,7 +4,7 @@ The `main` branch ships **only** the Rust workspace under `crates/`. Older Pytho
 
 ## Core idea
 
-Nexus v2 is a **local-first repository fleet intelligence engine**.
+Nexus is a **local-first repo fleet triage** CLI: inventory, identity resolution, scoring, planning, and reports—without a web dashboard (see `docs/PRODUCT_STRATEGY.md`, `docs/FAQ.md`).
 
 The system is intentionally split into layers:
 
@@ -15,13 +15,13 @@ The system is intentionally split into layers:
    Determine which clones/remotes are likely the same logical project.
 
 3. **Assessment**  
-   Score canonicality, usability, OSS readiness, and risk.
+   Score clusters along several dimensions (see `docs/SCORING.md` for product names vs JSON field names).
 
 4. **Planning**  
    Produce a deterministic action plan without mutating anything.
 
-5. **Explanation / API (optional)**  
-   Render or expose the results.
+5. **Presentation (CLI) and optional hooks**  
+   Markdown/JSON reports from the CLI. **`nexus serve`** provides a small **experimental** read-only JSON API over SQLite for local scripting; it is secondary to the CLI, not a stable platform surface.
 
 ## Workspace crates
 
@@ -53,7 +53,7 @@ Markdown / JSON rendering.
 Optional CLI integrations (jscpd, semgrep, gitleaks, syft) for plan evidence.
 
 ### `nexus-api`
-Axum HTTP read-only API over SQLite-backed inventory / plan.
+Axum HTTP **read-only** API over SQLite (powers **`serve`** only). Experimental and secondary to the CLI; not a dashboard backend.
 
 ### `nexus-cli`
 Thin orchestration layer.
@@ -69,9 +69,9 @@ raw inventory persisted in sqlite
    ↓
 nexus-plan resolves clusters
    ↓
-scores + evidence
+scores + evidence (`nexus score` or inside `nexus plan`)
    ↓
-plan.json + report.md
+plan.json + persisted plan row (`plan`) / report.md (`report`)
 ```
 
 ## Why SQLite first?
@@ -83,12 +83,9 @@ Because Nexus is a local-first CLI and needs:
 - simple export/import
 - zero external service dependency
 
-## Why no web UI in v1?
+## Why no web UI?
 
-The core risk is not presentation.  
-The core risk is deciding the wrong canonical repo and sending an agent after it.
-
-Therefore correctness of inventory + clustering beats UI.
+The core risk is not presentation—it is **choosing the wrong canonical repo**. The product prioritizes correct inventory + clustering over a browser UI. A dashboard would also drag the project toward hosted state and platform scope; that is an explicit non-goal (`docs/PRODUCT_STRATEGY.md`). An optional **TUI** may come later for inspection; it is not a replacement for the CLI engine.
 
 ## Native build dependencies
 

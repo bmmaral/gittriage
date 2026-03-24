@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use nexus_config::ConfigBundle;
 use nexus_core::{CloneRemoteLink, InventorySnapshot, RunRecord};
@@ -9,7 +10,10 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(name = "nexus")]
-#[command(about = "Deterministic repo fleet intelligence engine", version)]
+#[command(
+    about = "Local-first repo fleet triage: inventory, clustering, scores, and plans (read-only by default)",
+    version
+)]
 struct Cli {
     #[arg(long)]
     config: Option<PathBuf>,
@@ -27,6 +31,17 @@ enum Commands {
         #[arg(long)]
         github_owner: Option<String>,
     },
+    /// Compute cluster scores and evidence from the current inventory (does not write `plan.json` or persist the plan to SQLite).
+    Score {
+        #[arg(long, default_value = "text")]
+        format: ScoreFormat,
+        /// Skip pairwise merge-base evidence between git clones.
+        #[arg(long)]
+        no_merge_base: bool,
+        /// Run optional scanners (gitleaks, semgrep, jscpd, syft) on canonical clones when installed.
+        #[arg(long)]
+        external: bool,
+    },
     Plan {
         #[arg(long, default_value = "nexus-plan.json")]
         write: PathBuf,
@@ -42,12 +57,12 @@ enum Commands {
         format: ReportFormat,
     },
     Doctor,
-    /// v1 placeholder: pass `--dry-run` (mutating apply is not implemented).
+    /// Preview how many actions would apply. v1 is read-only: pass `--dry-run` only (mutating apply is not implemented).
     Apply {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Experimental: read-only JSON API over SQLite (`GET /health`, `/v1/plan`, `/v1/inventory`). Not a stable public surface yet.
+    /// Experimental: read-only JSON API over SQLite for local inspection. Not a dashboard and not a stable public API yet.
     Serve {
         #[arg(long, default_value_t = 3030)]
         port: u16,
@@ -59,6 +74,14 @@ enum Commands {
 #[derive(Debug, Clone, ValueEnum)]
 enum ReportFormat {
     Md,
+    Json,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum ScoreFormat {
+    /// One block per cluster: headline scores and evidence count.
+    Text,
+    /// JSON document with `clusters` (same `ClusterRecord` shape as inside `plan.json`, without actions).
     Json,
 }
 
@@ -76,6 +99,11 @@ fn main() -> Result<()> {
             roots,
             github_owner,
         } => cmd_scan(&db, &bundle, roots, github_owner),
+        Commands::Score {
+            format,
+            no_merge_base,
+            external,
+        } => cmd_score(&db, format, no_merge_base, external),
         Commands::Plan {
             write,
             no_merge_base,
@@ -215,6 +243,62 @@ fn cmd_scan(
     println!("remotes: {}", remotes.len());
     println!("clone↔remote links: {}", links.len());
     println!("db: {}", bundle.effective_db_path.display());
+    Ok(())
+}
+
+fn cmd_score(
+    db: &Database,
+    format: ScoreFormat,
+    no_merge_base: bool,
+    external: bool,
+) -> Result<()> {
+    let snapshot = db.load_inventory()?;
+    let opts = nexus_plan::PlanBuildOpts {
+        merge_base: !no_merge_base,
+    };
+    let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+    }
+    match format {
+        ScoreFormat::Text => {
+            for cp in &plan.clusters {
+                let c = &cp.cluster;
+                println!("{} — {} ({})", c.label, c.cluster_key, c.id);
+                println!(
+                    "  canonical {:.1}  health(usability) {:.1}  publish_readiness {:.1}  maintenance_risk {:.1}",
+                    c.scores.canonical,
+                    c.scores.usability,
+                    c.scores.oss_readiness,
+                    c.scores.risk
+                );
+                println!(
+                    "  evidence: {} items, confidence {:.2}, status {:?}",
+                    c.evidence.len(),
+                    c.confidence,
+                    c.status
+                );
+            }
+            if plan.clusters.is_empty() {
+                println!("(no clusters — run `nexus scan` first)");
+            }
+        }
+        ScoreFormat::Json => {
+            let clusters: Vec<serde_json::Value> = plan
+                .clusters
+                .iter()
+                .map(|cp| serde_json::to_value(&cp.cluster))
+                .collect::<Result<_, _>>()?;
+            let doc = serde_json::json!({
+                "schema_version": 1,
+                "kind": "nexus_scores",
+                "generated_at": Utc::now().to_rfc3339(),
+                "generated_by": format!("nexus {}", env!("CARGO_PKG_VERSION")),
+                "clusters": clusters,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
+        }
+    }
     Ok(())
 }
 

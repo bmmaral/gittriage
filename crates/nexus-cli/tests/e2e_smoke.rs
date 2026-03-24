@@ -16,7 +16,7 @@ fn doctor_succeeds() {
 }
 
 #[test]
-fn scan_plan_report_json_pipeline() {
+fn scan_score_plan_report_json_pipeline() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = dir.path().join("state.db");
     let cfg = dir.path().join("nexus.toml");
@@ -42,6 +42,29 @@ fn scan_plan_report_json_pipeline() {
             .expect("scan")
             .success(),
         "scan"
+    );
+
+    let score_out = Command::new(nexus_exe())
+        .current_dir(dir.path())
+        .args([
+            "--config",
+            cfg.to_str().unwrap(),
+            "score",
+            "--format",
+            "json",
+            "--no-merge-base",
+        ])
+        .output()
+        .expect("score");
+    assert!(
+        score_out.status.success(),
+        "score stderr: {}",
+        String::from_utf8_lossy(&score_out.stderr)
+    );
+    let score_stdout = String::from_utf8_lossy(&score_out.stdout);
+    assert!(
+        score_stdout.contains("nexus_scores") && score_stdout.contains("clusters"),
+        "score json: {score_stdout}"
     );
 
     let plan_path = dir.path().join("out-plan.json");
