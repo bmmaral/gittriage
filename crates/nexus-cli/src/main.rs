@@ -110,7 +110,7 @@ fn cmd_scan(
         config
             .default_roots
             .iter()
-            .map(expand_tilde)
+            .map(|s| expand_tilde(s.as_str()))
             .collect::<Vec<PathBuf>>()
     } else {
         roots

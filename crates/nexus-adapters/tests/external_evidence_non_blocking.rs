@@ -1,8 +1,8 @@
 use chrono::Utc;
 use nexus_adapters::attach_external_evidence;
 use nexus_core::{
-    ClusterMember, ClusterPlan, ClusterRecord, ClusterStatus, EvidenceItem, InventorySnapshot,
-    MemberKind, PlanDocument, ScoreBundle,
+    ClusterMember, ClusterPlan, ClusterRecord, ClusterStatus, InventorySnapshot, MemberKind,
+    PlanDocument, ScoreBundle,
 };
 use std::fs;
 use uuid::Uuid;
