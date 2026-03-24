@@ -19,9 +19,20 @@ pub struct ScanConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlannerConfig {
+    /// Minimum canonical score (0–100) before suggesting `ArchiveLocalDuplicate` for non-canonical clones.
     pub archive_duplicate_threshold: u8,
+    /// Emit license/CI/security publish actions when `oss_readiness` is below this (0–100).
     pub oss_candidate_threshold: u8,
+    /// Cluster is `Ambiguous` when planner confidence is strictly below this percent (1–99).
     pub ambiguous_cluster_threshold: u8,
+    /// Clone IDs to treat as canonical when present in a cluster (`scores`/`plan.json` → `canonical_clone_id`).
+    pub canonical_pins: Vec<String>,
+    /// Exact `cluster_key` values (e.g. `name:my-repo`, `url:github.com/o/r`) — no plan actions; evidence only.
+    pub ignored_cluster_keys: Vec<String>,
+    /// Exact `cluster_key` values — adds `user_archive_hint` evidence only (no automation).
+    pub archive_hint_cluster_keys: Vec<String>,
+    /// Optional scoring profile: `default`, `publish`, `open_source`, `security`, `ai_handoff` (see `docs/SCORING_PROFILES.md`).
+    pub scoring_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +61,12 @@ impl Default for PlannerConfig {
         Self {
             archive_duplicate_threshold: 80,
             oss_candidate_threshold: 70,
-            ambiguous_cluster_threshold: 55,
+            // Matches historical engine behavior (`confidence < 0.6` → ambiguous).
+            ambiguous_cluster_threshold: 60,
+            canonical_pins: Vec::new(),
+            ignored_cluster_keys: Vec::new(),
+            archive_hint_cluster_keys: Vec::new(),
+            scoring_profile: None,
         }
     }
 }
@@ -182,6 +198,9 @@ default_roots = []
         assert!(cfg.scan.respect_gitignore);
         assert_eq!(cfg.scan.max_readme_bytes, 16 * 1024);
         assert_eq!(cfg.planner.archive_duplicate_threshold, 80);
+        assert_eq!(cfg.planner.ambiguous_cluster_threshold, 60);
+        assert!(cfg.planner.canonical_pins.is_empty());
+        assert!(cfg.planner.ignored_cluster_keys.is_empty());
     }
 
     #[test]

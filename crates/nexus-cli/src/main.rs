@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use nexus_config::ConfigBundle;
 use nexus_core::{CloneRemoteLink, InventorySnapshot, RunRecord};
 use nexus_db::Database;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
@@ -146,6 +147,52 @@ enum ScoreFormat {
     Json,
 }
 
+fn parse_scoring_profile(raw: &Option<String>) -> nexus_plan::ScoringProfile {
+    let Some(s) = raw.as_deref().map(str::trim).filter(|x| !x.is_empty()) else {
+        return nexus_plan::ScoringProfile::Default;
+    };
+    let x = s.to_ascii_lowercase().replace('-', "_");
+    match x.as_str() {
+        "default" => nexus_plan::ScoringProfile::Default,
+        "publish" | "publish_readiness" => nexus_plan::ScoringProfile::PublishReadiness,
+        "open_source" | "open_source_readiness" | "oss" => {
+            nexus_plan::ScoringProfile::OpenSourceReadiness
+        }
+        "security" | "security_supply_chain" | "supply_chain" => {
+            nexus_plan::ScoringProfile::SecuritySupplyChain
+        }
+        "ai_handoff" | "ai" => nexus_plan::ScoringProfile::AiHandoff,
+        other => {
+            tracing::warn!(profile = %other, "unknown planner.scoring_profile; using default");
+            nexus_plan::ScoringProfile::Default
+        }
+    }
+}
+
+fn plan_build_opts(bundle: &ConfigBundle, merge_base: bool) -> nexus_plan::PlanBuildOpts {
+    let p = &bundle.config.planner;
+    nexus_plan::PlanBuildOpts {
+        merge_base,
+        ambiguous_cluster_threshold_pct: p.ambiguous_cluster_threshold.clamp(1, 99),
+        oss_candidate_threshold: p.oss_candidate_threshold.min(100),
+        archive_duplicate_canonical_min: p.archive_duplicate_threshold.min(100),
+        user_intent: nexus_plan::PlanUserIntent {
+            pin_canonical_clone_ids: p.canonical_pins.iter().cloned().collect::<HashSet<_>>(),
+            ignored_cluster_keys: p
+                .ignored_cluster_keys
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>(),
+            archive_hint_cluster_keys: p
+                .archive_hint_cluster_keys
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>(),
+            scoring_profile: parse_scoring_profile(&p.scoring_profile),
+        },
+    }
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
@@ -164,15 +211,15 @@ fn main() -> Result<()> {
             format,
             no_merge_base,
             external,
-        } => cmd_score(&db, format, no_merge_base, external),
+        } => cmd_score(&db, &bundle, format, no_merge_base, external),
         Commands::Plan {
             write,
             no_merge_base,
             external,
-        } => cmd_plan(&mut db, &write, no_merge_base, external),
-        Commands::Report { format } => cmd_report(&db, format),
+        } => cmd_plan(&mut db, &bundle, &write, no_merge_base, external),
+        Commands::Report { format } => cmd_report(&db, &bundle, format),
         Commands::Doctor { format } => cmd_doctor(&bundle, format),
-        Commands::Apply { dry_run, format } => cmd_apply(&db, dry_run, format),
+        Commands::Apply { dry_run, format } => cmd_apply(&db, &bundle, dry_run, format),
         Commands::Serve { port } => {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -187,14 +234,14 @@ fn main() -> Result<()> {
             with_plan,
             no_merge_base,
             external,
-        } => cmd_export(&db, with_plan, no_merge_base, external, output),
+        } => cmd_export(&db, &bundle, with_plan, no_merge_base, external, output),
         Commands::Import { path, force } => cmd_import(&mut db, &path, force),
         Commands::Explain {
             no_merge_base,
             external,
             format,
             target,
-        } => cmd_explain(&db, target, format, no_merge_base, external),
+        } => cmd_explain(&db, &bundle, target, format, no_merge_base, external),
     }
 }
 
@@ -330,6 +377,7 @@ fn parse_inventory_import(bytes: &[u8]) -> Result<InventorySnapshot> {
 
 fn cmd_export(
     db: &Database,
+    bundle: &ConfigBundle,
     with_plan: bool,
     no_merge_base: bool,
     external: bool,
@@ -337,9 +385,7 @@ fn cmd_export(
 ) -> Result<()> {
     let snapshot = db.load_inventory()?;
     let plan_json = if with_plan {
-        let opts = nexus_plan::PlanBuildOpts {
-            merge_base: !no_merge_base,
-        };
+        let opts = plan_build_opts(bundle, !no_merge_base);
         let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
         if external {
             nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
@@ -390,15 +436,14 @@ fn cmd_import(db: &mut Database, path: &Path, force: bool) -> Result<()> {
 
 fn cmd_explain(
     db: &Database,
+    bundle: &ConfigBundle,
     target: explain::ExplainTarget,
     format: explain::ExplainFormat,
     no_merge_base: bool,
     external: bool,
 ) -> Result<()> {
     let snapshot = db.load_inventory()?;
-    let opts = nexus_plan::PlanBuildOpts {
-        merge_base: !no_merge_base,
-    };
+    let opts = plan_build_opts(bundle, !no_merge_base);
     let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     if external {
         nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
@@ -408,14 +453,13 @@ fn cmd_explain(
 
 fn cmd_score(
     db: &Database,
+    bundle: &ConfigBundle,
     format: ScoreFormat,
     no_merge_base: bool,
     external: bool,
 ) -> Result<()> {
     let snapshot = db.load_inventory()?;
-    let opts = nexus_plan::PlanBuildOpts {
-        merge_base: !no_merge_base,
-    };
+    let opts = plan_build_opts(bundle, !no_merge_base);
     let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     if external {
         nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
@@ -464,11 +508,15 @@ fn cmd_score(
     Ok(())
 }
 
-fn cmd_plan(db: &mut Database, write: &Path, no_merge_base: bool, external: bool) -> Result<()> {
+fn cmd_plan(
+    db: &mut Database,
+    bundle: &ConfigBundle,
+    write: &Path,
+    no_merge_base: bool,
+    external: bool,
+) -> Result<()> {
     let snapshot = db.load_inventory()?;
-    let opts = nexus_plan::PlanBuildOpts {
-        merge_base: !no_merge_base,
-    };
+    let opts = plan_build_opts(bundle, !no_merge_base);
     let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     if external {
         nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
@@ -481,9 +529,10 @@ fn cmd_plan(db: &mut Database, write: &Path, no_merge_base: bool, external: bool
     Ok(())
 }
 
-fn cmd_report(db: &Database, format: ReportFormat) -> Result<()> {
+fn cmd_report(db: &Database, bundle: &ConfigBundle, format: ReportFormat) -> Result<()> {
     let snapshot: InventorySnapshot = db.load_inventory()?;
-    let plan = nexus_plan::build_plan(&snapshot)?;
+    let opts = plan_build_opts(bundle, true);
+    let plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     match format {
         ReportFormat::Md => {
             let md = nexus_report::render_markdown(&plan)?;
@@ -527,13 +576,14 @@ fn cmd_tools(format: ToolsFormat) -> Result<()> {
     Ok(())
 }
 
-fn cmd_apply(db: &Database, dry_run: bool, format: ApplyFormat) -> Result<()> {
+fn cmd_apply(db: &Database, bundle: &ConfigBundle, dry_run: bool, format: ApplyFormat) -> Result<()> {
     anyhow::ensure!(
         dry_run,
         "v1 is plan-only: use `nexus apply --dry-run` (mutating apply is disabled)"
     );
     let snapshot = db.load_inventory()?;
-    let plan = nexus_plan::build_plan(&snapshot)?;
+    let opts = plan_build_opts(bundle, true);
+    let plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     let actions: usize = plan.clusters.iter().map(|cp| cp.actions.len()).sum();
     let n_clusters = plan.clusters.len();
     match format {

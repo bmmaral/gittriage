@@ -12,4 +12,10 @@ max_hash_files = 64
 [planner]
 archive_duplicate_threshold = 80
 oss_candidate_threshold = 70
-ambiguous_cluster_threshold = 55
+# Ambiguous when planner confidence is below this percent (default 60 matches the historical 0.6 cutoff).
+ambiguous_cluster_threshold = 60
+# Optional: exact clone IDs from `nexus score --format json` to force as canonical within their cluster.
+# canonical_pins = ["clone-uuid-here"]
+# ignored_cluster_keys = ["name:experiment"]
+# archive_hint_cluster_keys = ["name:old-checkout"]
+# scoring_profile = "default"

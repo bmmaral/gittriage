@@ -12,15 +12,58 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use uuid::Uuid;
 
+/// Optional scoring profile: adjusts hygiene action thresholds only; default `ScoreBundle` axes are unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScoringProfile {
+    #[default]
+    Default,
+    PublishReadiness,
+    OpenSourceReadiness,
+    SecuritySupplyChain,
+    AiHandoff,
+}
+
+impl ScoringProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::PublishReadiness => "publish_readiness",
+            Self::OpenSourceReadiness => "open_source_readiness",
+            Self::SecuritySupplyChain => "security_supply_chain",
+            Self::AiHandoff => "ai_handoff",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PlanUserIntent {
+    pub pin_canonical_clone_ids: HashSet<String>,
+    pub ignored_cluster_keys: HashSet<String>,
+    pub archive_hint_cluster_keys: HashSet<String>,
+    pub scoring_profile: ScoringProfile,
+}
+
 #[derive(Debug, Clone)]
 pub struct PlanBuildOpts {
     /// Run pairwise `git merge-base` across git clones in a cluster (when object DB overlaps).
     pub merge_base: bool,
+    /// Ambiguous status when planner confidence is strictly below this percent (1–99).
+    pub ambiguous_cluster_threshold_pct: u8,
+    pub oss_candidate_threshold: u8,
+    /// Suggest archiving non-canonical clones only when canonical score is at least this (0–100).
+    pub archive_duplicate_canonical_min: u8,
+    pub user_intent: PlanUserIntent,
 }
 
 impl Default for PlanBuildOpts {
     fn default() -> Self {
-        Self { merge_base: true }
+        Self {
+            merge_base: true,
+            ambiguous_cluster_threshold_pct: 60,
+            oss_candidate_threshold: 70,
+            archive_duplicate_canonical_min: 80,
+            user_intent: PlanUserIntent::default(),
+        }
     }
 }
 
@@ -29,7 +72,7 @@ pub fn build_plan(snapshot: &InventorySnapshot) -> Result<PlanDocument> {
 }
 
 pub fn build_plan_with(snapshot: &InventorySnapshot, opts: PlanBuildOpts) -> Result<PlanDocument> {
-    let clusters = resolve_clusters(snapshot, opts.merge_base);
+    let clusters = resolve_clusters(snapshot, &opts);
     Ok(PlanDocument {
         schema_version: 1,
         scoring_rules_version: crate::scoring::SCORING_RULES_VERSION,
@@ -39,7 +82,9 @@ pub fn build_plan_with(snapshot: &InventorySnapshot, opts: PlanBuildOpts) -> Res
     })
 }
 
-pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<ClusterPlan> {
+pub fn resolve_clusters(snapshot: &InventorySnapshot, opts: &PlanBuildOpts) -> Vec<ClusterPlan> {
+    let ambiguous_threshold =
+        (opts.ambiguous_cluster_threshold_pct.clamp(1, 99) as f64) / 100.0;
     let remote_by_id: HashMap<String, &RemoteRecord> =
         snapshot.remotes.iter().map(|r| (r.id.clone(), r)).collect();
 
@@ -102,7 +147,12 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<C
     for (cluster_key, (cluster_clones, cluster_remotes)) in buckets {
         let cluster_key_for_hints = cluster_key.clone();
         let label = derive_label(&cluster_clones, &cluster_remotes);
-        let mut eval = crate::scoring::evaluate_cluster(&cluster_clones, &cluster_remotes);
+        let mut eval = crate::scoring::evaluate_cluster(
+            &cluster_clones,
+            &cluster_remotes,
+            ambiguous_threshold,
+        );
+        apply_canonical_pin_to_eval(&mut eval, &cluster_clones, opts);
         eval.scores = crate::scoring::finalize_scores(eval.scores);
 
         if cluster_key.starts_with("url:")
@@ -158,14 +208,15 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<C
             scores: eval.scores.clone(),
         };
 
-        if merge_base {
+        if opts.merge_base {
             enrich_merge_base_evidence(&mut cluster, &cluster_clones);
         }
 
         append_non_canonical_clone_evidence(&mut cluster, &cluster_clones);
         attach_cluster_shape_hints(&mut cluster, &cluster_clones, &cluster_key_for_hints);
 
-        let actions = build_actions(&cluster, &cluster_clones, &cluster_remotes);
+        let mut actions = build_actions(&cluster, &cluster_clones, &cluster_remotes, opts);
+        apply_user_intent_post(&mut cluster, &mut actions, opts);
         plans.push(ClusterPlan { cluster, actions });
     }
 
@@ -506,12 +557,93 @@ struct ActionExtras<'a> {
     risk_note: Option<&'a str>,
 }
 
+fn effective_oss_threshold(base: u8, profile: ScoringProfile) -> f64 {
+    let b = i16::from(base.min(100));
+    let adj = match profile {
+        ScoringProfile::Default => b,
+        ScoringProfile::PublishReadiness => b - 5,
+        ScoringProfile::OpenSourceReadiness => b - 10,
+        ScoringProfile::SecuritySupplyChain => b,
+        ScoringProfile::AiHandoff => b - 5,
+    }
+    .clamp(0, 100);
+    adj as f64
+}
+
+fn apply_canonical_pin_to_eval(
+    eval: &mut crate::scoring::ClusterEvaluation,
+    clones: &[CloneRecord],
+    opts: &PlanBuildOpts,
+) {
+    let pins = &opts.user_intent.pin_canonical_clone_ids;
+    if pins.is_empty() {
+        return;
+    }
+    for c in clones {
+        if pins.contains(&c.id) {
+            eval.canonical_clone_id = Some(c.id.clone());
+            eval.evidence.push(ev(
+                c.id.as_str(),
+                MemberKind::Clone,
+                "user_pinned_canonical",
+                5.0,
+                "clone ID listed in planner.canonical_pins (nexus.toml)",
+            ));
+            eval.scores.canonical = (eval.scores.canonical + 5.0).min(100.0);
+            return;
+        }
+    }
+}
+
+fn apply_user_intent_post(
+    cluster: &mut ClusterRecord,
+    actions: &mut Vec<PlanAction>,
+    opts: &PlanBuildOpts,
+) {
+    let ui = &opts.user_intent;
+    if ui.ignored_cluster_keys.contains(&cluster.cluster_key) {
+        let (sid, sk) = evidence_subject_cluster(cluster);
+        cluster.evidence.push(ev(
+            &sid,
+            sk,
+            "user_ignored_cluster",
+            0.0,
+            "planner.ignored_cluster_keys — plan actions suppressed; scores unchanged",
+        ));
+        actions.clear();
+    }
+    if ui.archive_hint_cluster_keys.contains(&cluster.cluster_key) {
+        let (sid, sk) = evidence_subject_cluster(cluster);
+        cluster.evidence.push(ev(
+            &sid,
+            sk,
+            "user_archive_hint",
+            0.0,
+            "planner.archive_hint_cluster_keys — user hint to review for archival; no automation",
+        ));
+    }
+    if ui.scoring_profile != ScoringProfile::Default {
+        let (sid, sk) = evidence_subject_cluster(cluster);
+        let name = ui.scoring_profile.as_str();
+        cluster.evidence.push(ev(
+            &sid,
+            sk,
+            "scoring_profile_active",
+            0.0,
+            &format!("optional profile `{name}` — see docs/SCORING_PROFILES.md; headline score axes unchanged"),
+        ));
+    }
+}
+
 fn build_actions(
     cluster: &ClusterRecord,
     clones: &[CloneRecord],
     remotes: &[RemoteRecord],
+    opts: &PlanBuildOpts,
 ) -> Vec<PlanAction> {
     let mut actions = Vec::new();
+    let oss_line = effective_oss_threshold(opts.oss_candidate_threshold, opts.user_intent.scoring_profile);
+    let archive_min = opts.archive_duplicate_canonical_min.min(100) as f64;
 
     if matches!(cluster.status, ClusterStatus::Ambiguous) {
         actions.push(plan_action(
@@ -538,7 +670,7 @@ fn build_actions(
         ));
     }
 
-    if clones.len() > 1 {
+    if clones.len() > 1 && cluster.scores.canonical >= archive_min {
         for clone in clones {
             if Some(&clone.id) != cluster.canonical_clone_id.as_ref() {
                 actions.push(plan_action(
@@ -560,7 +692,7 @@ fn build_actions(
     }
 
     let publish_score = cluster.scores.oss_readiness;
-    if publish_score < 70.0 {
+    if publish_score < oss_line {
         if let Some(clone_id) = cluster.canonical_clone_id.clone() {
             actions.push(plan_action(
                 Priority::Medium,
@@ -727,7 +859,7 @@ mod tests {
     fn scoring_engine_populates_all_score_axes() {
         let clone = sample_clone("clone-1", "proj");
         let remote = sample_github_remote("remote-gh-1", "github.com/acme/proj");
-        let eval = crate::scoring::evaluate_cluster(&[clone], &[remote]);
+        let eval = crate::scoring::evaluate_cluster(&[clone], &[remote], 0.6);
         let s = crate::scoring::finalize_scores(eval.scores);
         assert!(s.canonical > 0.0, "canonical: {s:?}");
         assert!(s.usability > 0.0, "usability: {s:?}");
@@ -751,7 +883,13 @@ mod tests {
             ..Default::default()
         };
 
-        let plans = resolve_clusters(&snapshot, false);
+        let plans = resolve_clusters(
+            &snapshot,
+            &PlanBuildOpts {
+                merge_base: false,
+                ..Default::default()
+            },
+        );
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].cluster.members.len(), 2);
         assert!(plans[0].cluster.cluster_key.starts_with("url:"));
@@ -767,7 +905,13 @@ mod tests {
             links: vec![],
             ..Default::default()
         };
-        let plans = resolve_clusters(&snapshot, false);
+        let plans = resolve_clusters(
+            &snapshot,
+            &PlanBuildOpts {
+                merge_base: false,
+                ..Default::default()
+            },
+        );
         assert_eq!(plans.len(), 2);
     }
 
@@ -795,7 +939,13 @@ mod tests {
             ..Default::default()
         };
 
-        let plans = resolve_clusters(&snapshot, false);
+        let plans = resolve_clusters(
+            &snapshot,
+            &PlanBuildOpts {
+                merge_base: false,
+                ..Default::default()
+            },
+        );
         assert_eq!(plans.len(), 1);
         let ev = &plans[0].cluster.evidence;
         assert!(
@@ -818,7 +968,13 @@ mod tests {
             links: vec![],
             ..Default::default()
         };
-        let plans = resolve_clusters(&snapshot, false);
+        let plans = resolve_clusters(
+            &snapshot,
+            &PlanBuildOpts {
+                merge_base: false,
+                ..Default::default()
+            },
+        );
         assert_eq!(plans.len(), 1);
         assert!(
             plans[0]
@@ -841,7 +997,13 @@ mod tests {
             links: vec![],
             ..Default::default()
         };
-        let plans = resolve_clusters(&snapshot, false);
+        let plans = resolve_clusters(
+            &snapshot,
+            &PlanBuildOpts {
+                merge_base: false,
+                ..Default::default()
+            },
+        );
         assert!(
             plans[0]
                 .cluster
@@ -866,7 +1028,13 @@ mod tests {
             links: vec![],
             ..Default::default()
         };
-        let plans = resolve_clusters(&snapshot, false);
+        let plans = resolve_clusters(
+            &snapshot,
+            &PlanBuildOpts {
+                merge_base: false,
+                ..Default::default()
+            },
+        );
         assert_eq!(plans.len(), 2);
         for p in &plans {
             assert!(
@@ -905,7 +1073,13 @@ mod tests {
             ],
             ..Default::default()
         };
-        let plans = resolve_clusters(&snapshot, false);
+        let plans = resolve_clusters(
+            &snapshot,
+            &PlanBuildOpts {
+                merge_base: false,
+                ..Default::default()
+            },
+        );
         assert_eq!(plans.len(), 2);
         for p in &plans {
             assert!(
@@ -917,5 +1091,82 @@ mod tests {
                 p.cluster.evidence
             );
         }
+    }
+
+    #[test]
+    fn canonical_pin_selects_configured_clone() {
+        let older = sample_clone("clone-old", "proj");
+        let mut newer = sample_clone("clone-new", "proj");
+        newer.last_commit_at = Some(Utc::now() - chrono::Duration::days(500));
+        let remote = sample_github_remote("remote-1", "github.com/acme/proj");
+        let snapshot = InventorySnapshot {
+            clones: vec![newer.clone(), older.clone()],
+            remotes: vec![remote.clone()],
+            links: vec![
+                CloneRemoteLink {
+                    clone_id: "clone-old".into(),
+                    remote_id: remote.id.clone(),
+                    relationship: "origin".into(),
+                },
+                CloneRemoteLink {
+                    clone_id: "clone-new".into(),
+                    remote_id: remote.id.clone(),
+                    relationship: "origin".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let mut pins = HashSet::new();
+        pins.insert("clone-new".into());
+        let opts = PlanBuildOpts {
+            merge_base: false,
+            user_intent: PlanUserIntent {
+                pin_canonical_clone_ids: pins,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let plans = resolve_clusters(&snapshot, &opts);
+        assert_eq!(
+            plans[0].cluster.canonical_clone_id.as_deref(),
+            Some("clone-new")
+        );
+        assert!(
+            plans[0]
+                .cluster
+                .evidence
+                .iter()
+                .any(|e| e.kind == "user_pinned_canonical")
+        );
+    }
+
+    #[test]
+    fn ignored_cluster_key_suppresses_actions() {
+        let c = sample_clone("c1", "solo");
+        let snapshot = InventorySnapshot {
+            clones: vec![c],
+            remotes: vec![],
+            links: vec![],
+            ..Default::default()
+        };
+        let mut keys = HashSet::new();
+        keys.insert("name:solo".into());
+        let opts = PlanBuildOpts {
+            merge_base: false,
+            user_intent: PlanUserIntent {
+                ignored_cluster_keys: keys,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let plans = resolve_clusters(&snapshot, &opts);
+        assert!(
+            plans[0]
+                .cluster
+                .evidence
+                .iter()
+                .any(|e| e.kind == "user_ignored_cluster")
+        );
+        assert!(plans[0].actions.is_empty());
     }
 }

@@ -918,6 +918,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "nexus-config",
  "nexus-db",
  "nexus-plan",
  "serde_json",

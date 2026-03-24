@@ -1,6 +1,6 @@
 # Scoring model
 
-Nexus uses a **small, explainable** scoring model (see `docs/PRODUCT_STRATEGY.md`). The engine is **deterministic**; optional profiles (e.g. stricter open-source readiness) may layer on later without changing the default headline experience.
+Nexus uses a **small, explainable** scoring model (see `docs/PRODUCT_STRATEGY.md`). The engine is **deterministic**; optional profiles layer on via `planner.scoring_profile` and evidence (see `docs/SCORING_PROFILES.md`) without changing the default five-axis `ScoreBundle` fields.
 
 ## JSON fields vs product language (v0)
 
@@ -35,7 +35,7 @@ A higher score means “this cluster’s chosen canonical member is likely the s
 - remote-only vs local-only state
 - duplicate overlap evidence
 - merge-base evidence (when enabled)
-- optional manual pin (future)
+- optional manual pin (`user_pinned_canonical` when `planner.canonical_pins` lists the clone id)
 
 ### Suggested weights
 
@@ -140,7 +140,18 @@ Every important score movement should be tied to evidence items:
 
 Scores without supporting evidence are a bug in the engine or report layer.
 
-**Rule set v3+** adds zero-delta **triage hints** (not score drivers) for inventory shape:
+## Failure modes and blind spots
+
+The model is intentionally **shallow** so it stays explainable. Treat low scores and `Ambiguous` status as “investigate,” not ground truth.
+
+- **Canonical confidence** can be wrong when remotes are missing, forks share names, or clones are grouped by display name only (`name:` buckets). Merge-base evidence helps only when git object databases overlap locally.
+- **Repo health** is scan-heuristic (manifest, README, license metadata)—not a build or test result.
+- **Recoverability** assumes recorded git metadata and links match reality; shallow clones and sparse checkouts may look worse than they are.
+- **Publish readiness** (`oss_readiness`) is not legal or compliance advice; it is a small set of file/metadata signals.
+- **Maintenance risk** aggregates ambiguity and gaps; it will false-positive on intentional offline or experimental trees.
+- **User config** (`canonical_pins`, `ignored_cluster_keys`) overrides planner *recommendations* for actions or canonical selection but does not erase underlying scan facts—read evidence alongside overrides.
+
+**Rule set v4+** adds zero-delta **triage hints** (not score drivers) for inventory shape and user intent:
 
 | Kind | Meaning |
 | --- | --- |
@@ -148,3 +159,7 @@ Scores without supporting evidence are a bug in the engine or report layer.
 | `fingerprint_split_clusters` | Same scan **fingerprint** appears in more than one cluster |
 | `duplicate_name_split_clusters` | Same **display name** ended up in multiple clusters (fork/pivot/weak signal) |
 | `stale_but_artifacted` | Canonical clone’s last commit is very old but manifest + README exist |
+| `user_pinned_canonical` | Clone id from `planner.canonical_pins` forced as canonical (+ small canonical bump) |
+| `user_ignored_cluster` | `cluster_key` in `planner.ignored_cluster_keys` — actions cleared; scores unchanged |
+| `user_archive_hint` | `cluster_key` in `planner.archive_hint_cluster_keys` — reminder only |
+| `scoring_profile_active` | Non-default `planner.scoring_profile` (see `docs/SCORING_PROFILES.md`) |

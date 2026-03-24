@@ -21,7 +21,7 @@ See `nexus.toml.example` in the repository root. Typical fields:
 | `github_owner` | Optional default for `gh`-based remote ingest |
 | `include_hidden` | Whether to descend into hidden directories when scanning |
 | `[scan]` | Read limits and gitignore behavior |
-| `[planner]` | Numeric thresholds for duplicate / ambiguity heuristics |
+| `[planner]` | Ambiguity and publish-action thresholds; optional `canonical_pins`, `ignored_cluster_keys`, `archive_hint_cluster_keys`, `scoring_profile` (see `docs/SCORING_PROFILES.md`, `docs/CLI.md`) |
 
 ## Environment
 

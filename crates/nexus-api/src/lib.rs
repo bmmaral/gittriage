@@ -1,9 +1,53 @@
 use anyhow::Context;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use nexus_db::Database;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
+
+fn parse_scoring_profile(raw: &Option<String>) -> nexus_plan::ScoringProfile {
+    let Some(s) = raw.as_deref().map(str::trim).filter(|x| !x.is_empty()) else {
+        return nexus_plan::ScoringProfile::Default;
+    };
+    let x = s.to_ascii_lowercase().replace('-', "_");
+    match x.as_str() {
+        "default" => nexus_plan::ScoringProfile::Default,
+        "publish" | "publish_readiness" => nexus_plan::ScoringProfile::PublishReadiness,
+        "open_source" | "open_source_readiness" | "oss" => {
+            nexus_plan::ScoringProfile::OpenSourceReadiness
+        }
+        "security" | "security_supply_chain" | "supply_chain" => {
+            nexus_plan::ScoringProfile::SecuritySupplyChain
+        }
+        "ai_handoff" | "ai" => nexus_plan::ScoringProfile::AiHandoff,
+        _ => nexus_plan::ScoringProfile::Default,
+    }
+}
+
+fn plan_build_opts_from_bundle(bundle: &nexus_config::ConfigBundle) -> nexus_plan::PlanBuildOpts {
+    let p = &bundle.config.planner;
+    nexus_plan::PlanBuildOpts {
+        merge_base: true,
+        ambiguous_cluster_threshold_pct: p.ambiguous_cluster_threshold.clamp(1, 99),
+        oss_candidate_threshold: p.oss_candidate_threshold.min(100),
+        archive_duplicate_canonical_min: p.archive_duplicate_threshold.min(100),
+        user_intent: nexus_plan::PlanUserIntent {
+            pin_canonical_clone_ids: p.canonical_pins.iter().cloned().collect::<HashSet<_>>(),
+            ignored_cluster_keys: p
+                .ignored_cluster_keys
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>(),
+            archive_hint_cluster_keys: p
+                .archive_hint_cluster_keys
+                .iter()
+                .cloned()
+                .collect::<HashSet<_>>(),
+            scoring_profile: parse_scoring_profile(&p.scoring_profile),
+        },
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,9 +72,11 @@ async fn plan_json(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let path = state.db_path.clone();
     let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
+        let bundle = nexus_config::ConfigBundle::load(None)?;
         let db = Database::open(&path)?;
         let snap = db.load_inventory()?;
-        let plan = nexus_plan::build_plan(&snap)?;
+        let opts = plan_build_opts_from_bundle(&bundle);
+        let plan = nexus_plan::build_plan_with(&snap, opts)?;
         Ok(serde_json::to_value(&plan)?)
     })
     .await

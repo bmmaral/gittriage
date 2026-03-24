@@ -5,7 +5,7 @@ use nexus_core::{
     ActionType, CloneRecord, CloneRemoteLink, InventorySnapshot, ManifestKind, MemberKind,
     RemoteRecord,
 };
-use nexus_plan::resolve_clusters;
+use nexus_plan::{resolve_clusters, PlanBuildOpts};
 
 fn sample_clone(id: &str, name: &str) -> CloneRecord {
     CloneRecord {
@@ -66,7 +66,13 @@ fn two_clones_linked_to_same_remote_form_one_cluster() {
         ..Default::default()
     };
 
-    let plans = resolve_clusters(&snapshot, false);
+    let plans = resolve_clusters(
+        &snapshot,
+        &PlanBuildOpts {
+            merge_base: false,
+            ..Default::default()
+        },
+    );
     assert_eq!(plans.len(), 1);
     assert_eq!(plans[0].cluster.members.len(), 3);
     assert!(plans[0].cluster.cluster_key.starts_with("url:"));
@@ -82,7 +88,13 @@ fn remote_only_unlinked_github_repo_is_single_cluster() {
         ..Default::default()
     };
 
-    let plans = resolve_clusters(&snapshot, false);
+    let plans = resolve_clusters(
+        &snapshot,
+        &PlanBuildOpts {
+            merge_base: false,
+            ..Default::default()
+        },
+    );
     assert_eq!(plans.len(), 1);
     assert_eq!(plans[0].cluster.members.len(), 1);
     assert!(plans[0].cluster.cluster_key.starts_with("url:"));
@@ -106,7 +118,13 @@ fn local_only_clone_without_remote_stays_name_clustered() {
         ..Default::default()
     };
 
-    let plans = resolve_clusters(&snapshot, false);
+    let plans = resolve_clusters(
+        &snapshot,
+        &PlanBuildOpts {
+            merge_base: false,
+            ..Default::default()
+        },
+    );
     assert_eq!(plans.len(), 1);
     assert!(plans[0].cluster.cluster_key.starts_with("name:"));
     assert!(

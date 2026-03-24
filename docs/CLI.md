@@ -39,6 +39,8 @@ Precedence (first match wins):
 
 Relative `db_path` values are resolved against the **current working directory**. See `nexus.toml.example`.
 
+The **`[planner]`** table also drives planning: ambiguity cutoff (`ambiguous_cluster_threshold`), when to suggest archiving duplicates vs canonical strength (`archive_duplicate_threshold`), publish-hygiene actions vs `oss_readiness` (`oss_candidate_threshold`), optional **`canonical_pins`** (clone ids), **`ignored_cluster_keys`** / **`archive_hint_cluster_keys`** (exact `cluster_key` from JSON output), and optional **`scoring_profile`** (`docs/SCORING_PROFILES.md`). `score`, `plan`, `report`, `export --with-plan`, `explain`, and `apply --dry-run` all use the loaded config; experimental `serve` resolves config from its process working directory.
+
 ## Commands
 
 ### `nexus scan`

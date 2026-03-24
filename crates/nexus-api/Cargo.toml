@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+nexus-config = { path = "../nexus-config" }
 nexus-db = { path = "../nexus-db" }
 nexus-plan = { path = "../nexus-plan" }
 serde_json.workspace = true

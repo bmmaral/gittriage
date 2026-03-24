@@ -64,6 +64,12 @@ Each element of `clusters` is:
 
 Omitted optional fields deserialize as null/absent and remain backward compatible for older `plan.json` files.
 
+## Action priorities (v1)
+
+Each `PlanAction` has a **`priority`** (`Low` | `Medium` | `High`) with **global** semantics across all clusters: High is for ambiguity review and confident duplicate cleanup suggestions; Medium covers hygiene and remote/clone gaps; Low is reserved for future use. There is **no per-profile priority ladder** in v1—optional `planner.scoring_profile` only changes which Medium-tier hygiene actions appear (thresholds), not the meaning of the enum. Post-v1 work could introduce profile-specific ordering without breaking JSON field names.
+
+**User overrides** (`planner.canonical_pins`, `planner.ignored_cluster_keys`, `planner.archive_hint_cluster_keys`) affect canonical selection, action lists, and evidence (`user_*` kinds); they do not add new `Priority` values. Ignored clusters keep scores and evidence but ship with an empty `actions` array.
+
 ### Example (excerpt)
 
 See `fixtures/golden/plan-v1.json` for a full round-trippable example.

@@ -113,7 +113,14 @@ fn merge_base_evidence_is_attached_best_effort() {
         links: vec![],
     };
 
-    let plan = build_plan_with(&snapshot, PlanBuildOpts { merge_base: true }).expect("build plan");
+    let plan = build_plan_with(
+        &snapshot,
+        PlanBuildOpts {
+            merge_base: true,
+            ..Default::default()
+        },
+    )
+    .expect("build plan");
     assert_eq!(plan.clusters.len(), 1);
 
     let mb_evidence: Vec<_> = plan.clusters[0]
@@ -132,7 +139,14 @@ fn merge_base_evidence_is_attached_best_effort() {
     );
 
     let plan_no =
-        build_plan_with(&snapshot, PlanBuildOpts { merge_base: false }).expect("build plan");
+        build_plan_with(
+            &snapshot,
+            PlanBuildOpts {
+                merge_base: false,
+                ..Default::default()
+            },
+        )
+        .expect("build plan");
     let has_mb = plan_no.clusters[0]
         .cluster
         .evidence

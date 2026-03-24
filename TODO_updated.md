@@ -68,14 +68,14 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
   - [x] exact intent
   - [x] evidence signals
   - [x] weight rationale (see `crates/nexus-plan/src/scoring.rs` constants / comments + `docs/SCORING.md`)
-  - [ ] failure modes / blind spots (expand over time)
+  - [x] failure modes / blind spots (expand over time) — see `docs/SCORING.md` § *Failure modes and blind spots*
 
 ### Finalize optional profiles
-- [ ] Define **Publish Readiness** profile
-- [ ] Define **Open Source Readiness** profile
-- [ ] Define **Security / Supply-Chain Posture** profile
-- [ ] Define **AI Handoff Readiness** profile
-- [ ] Ensure optional profiles do not distort the default headline experience
+- [x] Define **Publish Readiness** profile — `docs/SCORING_PROFILES.md` + `planner.scoring_profile = "publish"`
+- [x] Define **Open Source Readiness** profile — `open_source` / `oss`
+- [x] Define **Security / Supply-Chain Posture** profile — `security` (marker + docs; pair with `--external`)
+- [x] Define **AI Handoff Readiness** profile — `ai_handoff`
+- [x] Ensure optional profiles do not distort the default headline experience — profiles add evidence and adjust hygiene action thresholds only; default `ScoreBundle` axes unchanged
 
 ### Evidence quality
 - [x] Add merge-base evidence as a first-class signal for canonical confidence (contributes to canonical score + evidence; see `merge_base` kind)
@@ -101,12 +101,12 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
   - [x] pivoted repos (heuristic: `duplicate_name_split_clusters` when same display name maps to different clusters / remotes)
   - [x] stale-but-important repos (`stale_but_artifacted` when old last commit but manifest+README present)
   - [x] ambiguous duplicate clusters (`name_bucket_duplicate_cluster` for multi-clone name-only buckets; cross-cluster hints above)
-- [ ] Decide whether plan priorities are global, profile-based, or both
+- [x] Decide whether plan priorities are global, profile-based, or both — **global** `Priority` enum in v1; profiles affect which actions fire, not priority semantics (`docs/PLAN_SCHEMA.md`)
 
 ### Overrides and user intent
-- [ ] Add manual cluster pinning / canonical overrides in config
-- [ ] Add ignore/archive hints without performing destructive actions
-- [ ] Decide how user overrides affect score computation and evidence display
+- [x] Add manual cluster pinning / canonical overrides in config — `planner.canonical_pins` (clone ids)
+- [x] Add ignore/archive hints without performing destructive actions — `ignored_cluster_keys` clears actions; `archive_hint_cluster_keys` adds evidence only
+- [x] Decide how user overrides affect score computation and evidence display — pins add `user_pinned_canonical` + small canonical bump; ignore/archive are evidence + action suppression; see `docs/SCORING.md` / `docs/PLAN_SCHEMA.md`
 
 ---
 

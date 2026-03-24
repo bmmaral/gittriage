@@ -7,7 +7,7 @@ use nexus_core::{CloneRecord, ClusterStatus, EvidenceItem, MemberKind, RemoteRec
 use uuid::Uuid;
 
 /// Bump when rule weights or evidence kinds change materially (keep in sync with docs).
-pub const SCORING_RULES_VERSION: u32 = 3;
+pub const SCORING_RULES_VERSION: u32 = 4;
 
 /// Extra canonical confidence when `git merge-base` finds a common ancestor between two clones.
 pub const MERGE_BASE_CANONICAL_BONUS: f64 = 8.0;
@@ -21,7 +21,11 @@ pub struct ClusterEvaluation {
     pub confidence: f64,
 }
 
-pub fn evaluate_cluster(clones: &[CloneRecord], remotes: &[RemoteRecord]) -> ClusterEvaluation {
+pub fn evaluate_cluster(
+    clones: &[CloneRecord],
+    remotes: &[RemoteRecord],
+    ambiguous_confidence_threshold: f64,
+) -> ClusterEvaluation {
     let mut evidence = Vec::new();
     let mut scores = ScoreBundle::default();
 
@@ -394,7 +398,7 @@ pub fn evaluate_cluster(clones: &[CloneRecord], remotes: &[RemoteRecord]) -> Clu
     }
 
     let confidence = cluster_confidence(clones, remotes);
-    let status = if confidence < 0.6 {
+    let status = if confidence < ambiguous_confidence_threshold {
         ClusterStatus::Ambiguous
     } else {
         ClusterStatus::Resolved
