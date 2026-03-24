@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 pub const ENV_NEXUS_CONFIG: &str = "NEXUS_CONFIG";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ScanConfig {
     pub respect_gitignore: bool,
     pub max_readme_bytes: usize,
@@ -16,6 +17,7 @@ pub struct ScanConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PlannerConfig {
     pub archive_duplicate_threshold: u8,
     pub oss_candidate_threshold: u8,
@@ -23,6 +25,7 @@ pub struct PlannerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NexusConfig {
     pub db_path: PathBuf,
     pub default_roots: Vec<String>,
@@ -32,6 +35,26 @@ pub struct NexusConfig {
     pub planner: PlannerConfig,
 }
 
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            respect_gitignore: true,
+            max_readme_bytes: 16 * 1024,
+            max_hash_files: 64,
+        }
+    }
+}
+
+impl Default for PlannerConfig {
+    fn default() -> Self {
+        Self {
+            archive_duplicate_threshold: 80,
+            oss_candidate_threshold: 70,
+            ambiguous_cluster_threshold: 55,
+        }
+    }
+}
+
 impl Default for NexusConfig {
     fn default() -> Self {
         Self {
@@ -39,16 +62,8 @@ impl Default for NexusConfig {
             default_roots: vec!["~/Projects".into()],
             github_owner: None,
             include_hidden: false,
-            scan: ScanConfig {
-                respect_gitignore: true,
-                max_readme_bytes: 16 * 1024,
-                max_hash_files: 64,
-            },
-            planner: PlannerConfig {
-                archive_duplicate_threshold: 80,
-                oss_candidate_threshold: 70,
-                ambiguous_cluster_threshold: 55,
-            },
+            scan: ScanConfig::default(),
+            planner: PlannerConfig::default(),
         }
     }
 }
