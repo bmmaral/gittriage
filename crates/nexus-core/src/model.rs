@@ -110,7 +110,12 @@ pub struct EvidenceItem {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScoreBundle {
     pub canonical: f64,
+    /// Repo health / project hygiene (manifest, README, …).
     pub usability: f64,
+    /// Ability to recover or resync the project (git metadata, remotes, recency, clean tree).
+    #[serde(default)]
+    pub recoverability: f64,
+    /// Publish / handoff readiness (JSON field name unchanged for compatibility).
     pub oss_readiness: f64,
     pub risk: f64,
 }
@@ -160,12 +165,19 @@ pub struct PlanDocument {
     /// JSON plan format version. Missing in older files deserializes as `1`.
     #[serde(default = "plan_schema_version")]
     pub schema_version: u32,
+    /// Version of deterministic scoring rules (`nexus-plan`); not the app semver.
+    #[serde(default = "scoring_rules_version_default")]
+    pub scoring_rules_version: u32,
     pub generated_at: DateTime<Utc>,
     pub generated_by: String,
     pub clusters: Vec<ClusterPlan>,
 }
 
 const fn plan_schema_version() -> u32 {
+    1
+}
+
+const fn scoring_rules_version_default() -> u32 {
     1
 }
 

@@ -45,6 +45,7 @@ fn external_evidence_is_best_effort_and_non_blocking() {
 
     let mut plan = PlanDocument {
         schema_version: 1,
+        scoring_rules_version: 2,
         generated_at: Utc::now(),
         generated_by: "test".into(),
         clusters: vec![ClusterPlan {

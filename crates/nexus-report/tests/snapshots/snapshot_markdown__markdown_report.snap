@@ -1,4 +1,5 @@
 ---
+source: crates/nexus-report/tests/snapshot_markdown.rs
 expression: md
 ---
 # Nexus Report
@@ -19,6 +20,7 @@ expression: md
 
 - Canonical confidence: `50.0` (`scores.canonical`)
 - Repo health: `40.0` (`scores.usability`)
+- Recoverability: `55.0` (`scores.recoverability`)
 - Publish readiness: `30.0` (`scores.oss_readiness`)
 - Maintenance risk: `10.0` (`scores.risk`)
 
@@ -26,6 +28,7 @@ expression: md
 
 - **Canonical confidence (`50.0`):** reflects remote URL agreement, clone freshness, git metadata, and optional `merge_base` lines in Evidence below.
 - **Repo health (`40.0`):** reflects manifest/readme signals and similar scan-time cues (`manifest_present`, `readme_present`, …).
+- **Recoverability (`55.0`):** reflects git metadata, remote linkage, recency, and worktree state (`git_object_db`, `remote_backup_path`, `clean_worktree_recover`, …).
 - **Publish readiness (`30.0`):** reflects license and GitHub metadata heuristics—not a full OSS audit (`license_present`, remote fork/archived flags, …).
 - **Maintenance risk (`10.0`):** higher when clusters are ambiguous, duplicated, or missing remotes (`multiple_clones`, `ambiguous_cluster`, …).
 
@@ -36,4 +39,3 @@ expression: md
 ### Actions
 
 - `Medium` `AddLicense` target=`clone-1` — test
-

@@ -55,8 +55,8 @@ nexus scan ~/Projects ~/code --github-owner your-github-login
 
 Compute cluster **scores** and **evidence** from the latest inventory. Does **not** write a plan file and does **not** call `persist_plan` (use `nexus plan` to refresh the persisted plan and `plan.json`).
 
-- `--format text` (default) — human-readable lines per cluster.
-- `--format json` — JSON with `kind: "nexus_scores"`, `schema_version`, and a `clusters` array of `ClusterRecord` objects (same shape as inside `plan.json`, without per-cluster actions).
+- `--format text` (default) — human-readable lines per cluster (canonical, repo health, recoverability, publish readiness, risk).
+- `--format json` — JSON with `kind: "nexus_scores"`, `schema_version`, and a `clusters` array of `ClusterRecord` objects (same `scores` shape as `plan.json`, without per-cluster actions).
 - `--no-merge-base` — skip pairwise `git merge-base` evidence between git clones in the same cluster.
 - `--external` — when **gitleaks**, **semgrep**, **jscpd**, or **syft** are on `PATH`, run them on canonical clones and attach evidence (can be slow).
 
@@ -69,7 +69,7 @@ nexus score --format json --no-merge-base
 
 ### `nexus plan`
 
-Resolve clusters, score them, optionally attach external evidence, write a deterministic plan file, and **persist** the plan to SQLite (for `serve` and future consumers).
+Resolve clusters, score them, optionally attach external evidence, write a deterministic plan file, and **persist** the plan to SQLite (for `serve` and future consumers). Plan JSON includes `scoring_rules_version` (rule-set revision; see `docs/SCORING.md`).
 
 - `--no-merge-base` — skip pairwise `git merge-base` evidence between git clones in the same cluster.
 - `--external` — optional scanners on canonical clones (see above).

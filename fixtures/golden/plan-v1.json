@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "scoring_rules_version": 2,
   "generated_at": "2026-03-24T12:00:00Z",
   "generated_by": "nexus 0.1.0",
   "clusters": [
@@ -29,6 +30,7 @@
         "scores": {
           "canonical": 91.0,
           "usability": 68.0,
+          "recoverability": 80.0,
           "oss_readiness": 42.0,
           "risk": 29.0
         }

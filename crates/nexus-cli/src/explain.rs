@@ -148,8 +148,12 @@ fn render_explain_text(cp: &ClusterPlan, snapshot: &InventorySnapshot) -> String
         c.status, c.confidence
     ));
     out.push_str(&format!(
-        "scores: canonical {:.1}  usability {:.1}  oss_readiness {:.1}  risk {:.1}\n",
-        c.scores.canonical, c.scores.usability, c.scores.oss_readiness, c.scores.risk
+        "scores: canonical {:.1}  usability {:.1}  recoverability {:.1}  publish_readiness {:.1}  risk {:.1}\n",
+        c.scores.canonical,
+        c.scores.usability,
+        c.scores.recoverability,
+        c.scores.oss_readiness,
+        c.scores.risk
     ));
     if let Some(cc) = &c.canonical_clone_id {
         let path = snapshot

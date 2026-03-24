@@ -1,9 +1,12 @@
+mod scoring;
+
+pub use scoring::SCORING_RULES_VERSION;
+
 use anyhow::Result;
 use chrono::Utc;
 use nexus_core::{
     ActionType, CloneRecord, ClusterMember, ClusterPlan, ClusterRecord, ClusterStatus,
     EvidenceItem, InventorySnapshot, MemberKind, PlanAction, PlanDocument, Priority, RemoteRecord,
-    ScoreBundle,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -29,6 +32,7 @@ pub fn build_plan_with(snapshot: &InventorySnapshot, opts: PlanBuildOpts) -> Res
     let clusters = resolve_clusters(snapshot, opts.merge_base);
     Ok(PlanDocument {
         schema_version: 1,
+        scoring_rules_version: crate::scoring::SCORING_RULES_VERSION,
         generated_at: Utc::now(),
         generated_by: format!("nexus {}", env!("CARGO_PKG_VERSION")),
         clusters,
@@ -97,20 +101,21 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<C
     let mut plans = Vec::new();
     for (cluster_key, (cluster_clones, cluster_remotes)) in buckets {
         let label = derive_label(&cluster_clones, &cluster_remotes);
-        let (mut scores, mut evidence, canonical_clone_id, canonical_remote_id, status, confidence) =
-            assess_cluster(&cluster_clones, &cluster_remotes);
+        let mut eval = crate::scoring::evaluate_cluster(&cluster_clones, &cluster_remotes);
+        eval.scores = crate::scoring::finalize_scores(eval.scores);
 
         if cluster_key.starts_with("url:")
             && (!cluster_clones.is_empty() || !cluster_remotes.is_empty())
         {
             let norm = &cluster_key[4..];
-            scores.canonical = (scores.canonical + 25.0).min(100.0);
-            let subject = canonical_clone_id
+            eval.scores.canonical = (eval.scores.canonical + 25.0).min(100.0);
+            let subject = eval
+                .canonical_clone_id
                 .as_ref()
                 .and_then(|id| cluster_clones.iter().find(|c| c.id == *id))
                 .map(|c| (c.id.as_str(), MemberKind::Clone))
                 .or_else(|| {
-                    canonical_remote_id.as_ref().and_then(|id| {
+                    eval.canonical_remote_id.as_ref().and_then(|id| {
                         cluster_remotes
                             .iter()
                             .find(|r| r.id == *id)
@@ -129,7 +134,7 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<C
                 });
 
             if let Some((sid, kind)) = subject {
-                evidence.push(ev(
+                eval.evidence.push(ev(
                     sid,
                     kind,
                     "remote_url_match",
@@ -143,13 +148,13 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<C
             id: format!("cluster-{}", Uuid::new_v4()),
             cluster_key,
             label,
-            status,
-            confidence,
-            canonical_clone_id,
-            canonical_remote_id,
+            status: eval.status,
+            confidence: eval.confidence,
+            canonical_clone_id: eval.canonical_clone_id,
+            canonical_remote_id: eval.canonical_remote_id,
             members: build_members(&cluster_clones, &cluster_remotes),
-            evidence: evidence.clone(),
-            scores: scores.clone(),
+            evidence: eval.evidence.clone(),
+            scores: eval.scores.clone(),
         };
 
         if merge_base {
@@ -236,7 +241,7 @@ fn enrich_merge_base_evidence(cluster: &mut ClusterRecord, clones: &[CloneRecord
                 }
             };
             let delta = if hint.merge_base_oid.is_some() {
-                8.0
+                crate::scoring::MERGE_BASE_CANONICAL_BONUS
             } else {
                 0.0
             };
@@ -305,172 +310,6 @@ fn build_members(clones: &[CloneRecord], remotes: &[RemoteRecord]) -> Vec<Cluste
         });
     }
     members
-}
-
-fn assess_cluster(
-    clones: &[CloneRecord],
-    remotes: &[RemoteRecord],
-) -> (
-    ScoreBundle,
-    Vec<EvidenceItem>,
-    Option<String>,
-    Option<String>,
-    ClusterStatus,
-    f64,
-) {
-    let mut evidence = Vec::new();
-    let mut scores = ScoreBundle::default();
-
-    let canonical_clone = clones
-        .iter()
-        .max_by_key(|c| (c.last_commit_at, c.is_git, !c.is_dirty));
-    let canonical_remote = remotes.iter().max_by_key(|r| r.pushed_at);
-
-    if let Some(clone) = canonical_clone {
-        scores.canonical += 30.0;
-        evidence.push(ev(
-            &clone.id,
-            MemberKind::Clone,
-            "freshest_clone",
-            30.0,
-            "selected as best local candidate",
-        ));
-
-        if clone.is_git {
-            scores.canonical += 10.0;
-            evidence.push(ev(
-                &clone.id,
-                MemberKind::Clone,
-                "git_repo",
-                10.0,
-                "has .git metadata",
-            ));
-        }
-        if clone.manifest_kind.is_some() {
-            scores.usability += 15.0;
-            evidence.push(ev(
-                &clone.id,
-                MemberKind::Clone,
-                "manifest_present",
-                15.0,
-                "project manifest detected",
-            ));
-        }
-        if clone.readme_title.is_some() {
-            scores.usability += 10.0;
-            evidence.push(ev(
-                &clone.id,
-                MemberKind::Clone,
-                "readme_present",
-                10.0,
-                "readme title detected",
-            ));
-        }
-        if clone.license_spdx.is_some() {
-            scores.oss_readiness += 15.0;
-            evidence.push(ev(
-                &clone.id,
-                MemberKind::Clone,
-                "license_present",
-                15.0,
-                "license file detected",
-            ));
-        }
-    }
-
-    if let Some(remote) = canonical_remote {
-        scores.canonical += 20.0;
-        evidence.push(ev(
-            &remote.id,
-            MemberKind::Remote,
-            "freshest_remote",
-            20.0,
-            "selected as best remote candidate",
-        ));
-
-        if !remote.is_archived {
-            scores.oss_readiness += 10.0;
-        }
-        if !remote.is_fork {
-            scores.oss_readiness += 5.0;
-        }
-    }
-
-    if clones.len() > 1 {
-        scores.risk += 25.0;
-        evidence.push(ev(
-            &clones[0].id,
-            MemberKind::Clone,
-            "multiple_clones",
-            25.0,
-            "more than one local clone in cluster",
-        ));
-    }
-
-    if remotes.is_empty() && !clones.is_empty() {
-        scores.risk += 15.0;
-        scores.canonical -= 5.0;
-    }
-
-    if clones.is_empty() && !remotes.is_empty() {
-        scores.risk += 10.0;
-    }
-
-    let confidence = if clones.len() + remotes.len() <= 1 {
-        0.5
-    } else if clones.len() > 1 && remotes.is_empty() {
-        0.55
-    } else {
-        0.8
-    };
-
-    let status = if confidence < 0.6 {
-        ClusterStatus::Ambiguous
-    } else {
-        ClusterStatus::Resolved
-    };
-
-    if matches!(status, ClusterStatus::Ambiguous) {
-        let (sid, sk) = canonical_subject_tuple(canonical_clone, canonical_remote, clones, remotes);
-        evidence.push(ev(
-            sid,
-            sk,
-            "ambiguous_cluster",
-            0.0,
-            "cluster confidence is below threshold; canonical selection is tentative—verify before cleanup or automation",
-        ));
-    }
-
-    (
-        normalize_scores(scores),
-        evidence,
-        canonical_clone.map(|c| c.id.clone()),
-        canonical_remote.map(|r| r.id.clone()),
-        status,
-        confidence,
-    )
-}
-
-/// Subject for cluster-level evidence when no canonical clone exists.
-fn canonical_subject_tuple<'a>(
-    canonical_clone: Option<&'a CloneRecord>,
-    canonical_remote: Option<&'a RemoteRecord>,
-    clones: &'a [CloneRecord],
-    remotes: &'a [RemoteRecord],
-) -> (&'a str, MemberKind) {
-    if let Some(c) = canonical_clone {
-        return (c.id.as_str(), MemberKind::Clone);
-    }
-    if let Some(r) = canonical_remote {
-        return (r.id.as_str(), MemberKind::Remote);
-    }
-    if let Some(c) = clones.first() {
-        return (c.id.as_str(), MemberKind::Clone);
-    }
-    if let Some(r) = remotes.first() {
-        return (r.id.as_str(), MemberKind::Remote);
-    }
-    ("cluster", MemberKind::Clone)
 }
 
 struct ActionExtras<'a> {
@@ -635,14 +474,6 @@ fn ev(
     }
 }
 
-fn normalize_scores(mut scores: ScoreBundle) -> ScoreBundle {
-    scores.canonical = scores.canonical.clamp(0.0, 100.0);
-    scores.usability = scores.usability.clamp(0.0, 100.0);
-    scores.oss_readiness = scores.oss_readiness.clamp(0.0, 100.0);
-    scores.risk = scores.risk.clamp(0.0, 100.0);
-    scores
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,6 +514,19 @@ mod tests {
             is_private: false,
             pushed_at: Some(Utc::now()),
         }
+    }
+
+    #[test]
+    fn scoring_engine_populates_all_score_axes() {
+        let clone = sample_clone("clone-1", "proj");
+        let remote = sample_github_remote("remote-gh-1", "github.com/acme/proj");
+        let eval = crate::scoring::evaluate_cluster(&[clone], &[remote]);
+        let s = crate::scoring::finalize_scores(eval.scores);
+        assert!(s.canonical > 0.0, "canonical: {s:?}");
+        assert!(s.usability > 0.0, "usability: {s:?}");
+        assert!(s.recoverability > 0.0, "recoverability: {s:?}");
+        assert!(s.oss_readiness > 0.0, "oss_readiness: {s:?}");
+        assert!(s.risk >= 0.0, "risk: {s:?}");
     }
 
     #[test]

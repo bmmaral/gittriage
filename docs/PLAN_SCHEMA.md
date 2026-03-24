@@ -7,6 +7,7 @@ Top-level object:
 | Field | Type | Description |
 | --- | --- | --- |
 | `schema_version` | number | Format version; always `1` for this shape |
+| `scoring_rules_version` | number | Optional; defaults to `1` if omitted. Version of deterministic scoring rules (`nexus-plan`); see `docs/SCORING.md` |
 | `generated_at` | string | RFC 3339 UTC timestamp |
 | `generated_by` | string | Producer string, e.g. `nexus 0.1.0` |
 | `clusters` | array | One entry per `ClusterPlan` |
@@ -33,7 +34,7 @@ Each element of `clusters` is:
 | `canonical_remote_id` | string or null | |
 | `members` | array | `{ "kind": "Clone" \| "Remote", "id": "..." }` |
 | `evidence` | array | See below |
-| `scores` | object | `canonical`, `usability`, `oss_readiness`, `risk` (numbers) |
+| `scores` | object | `canonical`, `usability`, `recoverability` (optional, defaults `0`), `oss_readiness`, `risk` (numbers 0–100) |
 
 ### `EvidenceItem`
 

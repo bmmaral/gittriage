@@ -68,9 +68,10 @@ fn render_cluster(out: &mut String, cluster_plan: &ClusterPlan) {
 
     out.push_str("### Scores\n\n");
     out.push_str(&format!(
-        "- Canonical confidence: `{:.1}` (`scores.canonical`)\n- Repo health: `{:.1}` (`scores.usability`)\n- Publish readiness: `{:.1}` (`scores.oss_readiness`)\n- Maintenance risk: `{:.1}` (`scores.risk`)\n\n",
+        "- Canonical confidence: `{:.1}` (`scores.canonical`)\n- Repo health: `{:.1}` (`scores.usability`)\n- Recoverability: `{:.1}` (`scores.recoverability`)\n- Publish readiness: `{:.1}` (`scores.oss_readiness`)\n- Maintenance risk: `{:.1}` (`scores.risk`)\n\n",
         cluster.scores.canonical,
         cluster.scores.usability,
+        cluster.scores.recoverability,
         cluster.scores.oss_readiness,
         cluster.scores.risk
     ));
@@ -123,6 +124,10 @@ fn render_score_explanations(out: &mut String, cluster: &ClusterRecord) {
     out.push_str(&format!(
         "- **Repo health (`{:.1}`):** reflects manifest/readme signals and similar scan-time cues (`manifest_present`, `readme_present`, …).\n",
         cluster.scores.usability
+    ));
+    out.push_str(&format!(
+        "- **Recoverability (`{:.1}`):** reflects git metadata, remote linkage, recency, and worktree state (`git_object_db`, `remote_backup_path`, `clean_worktree_recover`, …).\n",
+        cluster.scores.recoverability
     ));
     out.push_str(&format!(
         "- **Publish readiness (`{:.1}`):** reflects license and GitHub metadata heuristics—not a full OSS audit (`license_present`, remote fork/archived flags, …).\n",

@@ -7,6 +7,7 @@ use nexus_core::{
 fn fixture_plan() -> PlanDocument {
     PlanDocument {
         schema_version: 1,
+        scoring_rules_version: 2,
         generated_at: "2026-01-01T12:00:00Z"
             .parse::<DateTime<Utc>>()
             .expect("fixture time"),
@@ -41,6 +42,7 @@ fn fixture_plan() -> PlanDocument {
                 scores: ScoreBundle {
                     canonical: 50.0,
                     usability: 40.0,
+                    recoverability: 55.0,
                     oss_readiness: 30.0,
                     risk: 10.0,
                 },

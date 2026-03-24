@@ -400,9 +400,10 @@ fn cmd_score(
                 let c = &cp.cluster;
                 println!("{} — {} ({})", c.label, c.cluster_key, c.id);
                 println!(
-                    "  canonical {:.1}  health(usability) {:.1}  publish_readiness {:.1}  maintenance_risk {:.1}",
+                    "  canonical {:.1}  health {:.1}  recoverability {:.1}  publish {:.1}  risk {:.1}",
                     c.scores.canonical,
                     c.scores.usability,
+                    c.scores.recoverability,
                     c.scores.oss_readiness,
                     c.scores.risk
                 );
@@ -425,6 +426,7 @@ fn cmd_score(
                 .collect::<Result<_, _>>()?;
             let doc = serde_json::json!({
                 "schema_version": 1,
+                "scoring_rules_version": plan.scoring_rules_version,
                 "kind": "nexus_scores",
                 "generated_at": Utc::now().to_rfc3339(),
                 "generated_by": format!("nexus {}", env!("CARGO_PKG_VERSION")),

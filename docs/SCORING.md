@@ -9,9 +9,12 @@ Nexus uses a **small, explainable** scoring model (see `docs/PRODUCT_STRATEGY.md
 | JSON field (`ScoreBundle`) | Product concept (strategy) | Notes |
 | --- | --- | --- |
 | `canonical` | **Canonical confidence** | How sure we are about the canonical working copy |
-| `usability` | **Repo health** (and partially **recoverability**) | v0 combines operational “health” signals in one bucket; split is a future refinement |
+| `usability` | **Repo health** | Manifest, README, license-onboarding cues from scan |
+| `recoverability` | **Recoverability** | Git metadata, remote linkage, recency, clean worktree—can you resync or restore confidently? |
 | `oss_readiness` | **Publish readiness** signals | License/docs/publish cues—not “OSS compatibility” as a headline for all users |
 | `risk` | **Maintenance risk** | Higher = more caution / time sink |
+
+`PlanDocument` also carries **`scoring_rules_version`** (integer): the version of the deterministic rule set in `nexus-plan` (`crates/nexus-plan/src/scoring.rs`). It can change without bumping the CLI semver.
 
 Do **not** treat `oss_readiness` as “this project is OSS-ready” for every user; many users only want triage. Optional **Open Source Readiness** and other profiles will be documented separately when implemented.
 
@@ -64,20 +67,31 @@ Illustrative; exact `kind` strings and deltas come from the planner.
 
 ## Usability score — `scores.usability` (0–100)
 
-**Product name:** repo health (recoverability overlaps in v0).  
+**Product name:** repo health.  
 A higher score means “easier to build, reason about, and continue.”
 
-Signals:
+Signals (implemented today):
 
-- README present and non-trivial
-- manifest/lockfile present
-- tests present
-- CI present
-- license present
-- changelog/contributing present
-- install/run commands inferable
-- secret findings absent
-- dependency inventory extractable
+- project manifest present (`manifest_present`)
+- README / title present (`readme_present`)
+- license metadata (lightweight onboarding signal: `license_signal_usability`)
+- scan fingerprint when present (`content_fingerprint`)
+
+Planned / adapter-driven signals (docs target): tests, CI, changelog, secret findings, SBOM.
+
+## Recoverability — `scores.recoverability` (0–100)
+
+**Product name:** recoverability.  
+A higher score means “you can likely resync, restore, or reason about lineage without heroics.”
+
+Signals (implemented today):
+
+- `.git` present (`git_object_db`)
+- HEAD oid recorded (`resolved_head`)
+- default / active branch known
+- clean canonical worktree (`clean_worktree_recover`)
+- recent commit on canonical (`recent_sync_signal`)
+- cluster has linked remotes (`remote_backup_path`)
 
 ## Publish readiness (JSON: `scores.oss_readiness`) (0–100)
 

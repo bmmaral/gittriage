@@ -59,16 +59,16 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 ## P1 — Scoring system hardening
 
 ### Finalize default scores
-- [ ] Lock the default score set:
-  - [ ] Canonical Confidence
-  - [ ] Repo Health
-  - [ ] Recoverability
-  - [ ] Maintenance Risk
-- [ ] Document each default score with:
-  - [ ] exact intent
-  - [ ] evidence signals
-  - [ ] weight rationale
-  - [ ] failure modes / blind spots
+- [x] Lock the default score set (JSON: `canonical`, `usability`, `recoverability`, `oss_readiness` / publish readiness, `risk`):
+  - [x] Canonical Confidence
+  - [x] Repo Health
+  - [x] Recoverability
+  - [x] Maintenance Risk
+- [x] Document each default score with:
+  - [x] exact intent
+  - [x] evidence signals
+  - [x] weight rationale (see `crates/nexus-plan/src/scoring.rs` constants / comments + `docs/SCORING.md`)
+  - [ ] failure modes / blind spots (expand over time)
 
 ### Finalize optional profiles
 - [ ] Define **Publish Readiness** profile
@@ -83,7 +83,7 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 - [x] Add explicit evidence for why a clone was **not** selected as canonical (`not_canonical_clone`)
 - [x] Add protection against false canonical selection in ambiguous clusters (`ambiguous_cluster` evidence + report **Warnings**)
 - [x] Make score explanations mandatory in report output (`### Score explanations` in markdown)
-- [ ] Version scoring rules separately from app version if necessary
+- [x] Version scoring rules separately from app version (`PlanDocument.scoring_rules_version`, `nexus_plan::SCORING_RULES_VERSION`)
 
 ---
 
