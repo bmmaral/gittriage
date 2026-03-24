@@ -87,7 +87,8 @@ impl ConfigBundle {
     /// 5. Built-in defaults (no file)
     pub fn load(explicit: Option<&Path>) -> Result<Self> {
         let (config, source_path) = load_layered(explicit)?;
-        let effective_db_path = resolve_db_path(&config.db_path);
+        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let effective_db_path = resolve_db_path_with_cwd(&config.db_path, &cwd);
         Ok(Self {
             config,
             source_path,
@@ -146,13 +147,11 @@ fn ensure_config_exists(path: &Path) -> Result<()> {
     }
 }
 
-fn resolve_db_path(db_path: &Path) -> PathBuf {
+fn resolve_db_path_with_cwd(db_path: &Path, cwd: &Path) -> PathBuf {
     if db_path.is_absolute() {
         db_path.to_path_buf()
     } else {
-        env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(db_path)
+        cwd.join(db_path)
     }
 }
 
@@ -161,5 +160,58 @@ pub fn default_config_path() -> PathBuf {
         dirs.config_dir().join("nexus.toml")
     } else {
         PathBuf::from("nexus.toml")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn partial_toml_fills_defaults() {
+        let raw = r#"
+db_path = "/tmp/nexus.db"
+default_roots = []
+"#;
+        let cfg: NexusConfig = toml::from_str(raw).expect("parse");
+        assert_eq!(cfg.db_path, PathBuf::from("/tmp/nexus.db"));
+        assert!(cfg.default_roots.is_empty());
+        assert!(!cfg.include_hidden);
+        assert_eq!(cfg.github_owner, None);
+        assert!(cfg.scan.respect_gitignore);
+        assert_eq!(cfg.scan.max_readme_bytes, 16 * 1024);
+        assert_eq!(cfg.planner.archive_duplicate_threshold, 80);
+    }
+
+    #[test]
+    fn partial_scan_table_fills_scan_defaults() {
+        let raw = r#"
+db_path = "/x.db"
+default_roots = []
+[scan]
+max_hash_files = 1
+"#;
+        let cfg: NexusConfig = toml::from_str(raw).expect("parse");
+        assert_eq!(cfg.scan.max_hash_files, 1);
+        assert!(cfg.scan.respect_gitignore);
+        assert_eq!(cfg.scan.max_readme_bytes, 16 * 1024);
+    }
+
+    #[test]
+    fn resolve_db_path_absolute_unchanged() {
+        let cwd = Path::new("/tmp/wd");
+        let p = Path::new("/var/db.sqlite");
+        assert_eq!(resolve_db_path_with_cwd(p, cwd), PathBuf::from("/var/db.sqlite"));
+    }
+
+    #[test]
+    fn resolve_db_path_relative_joins_cwd() {
+        let cwd = Path::new("/home/user/proj");
+        let p = Path::new(".nexus/state.db");
+        assert_eq!(
+            resolve_db_path_with_cwd(p, cwd),
+            PathBuf::from("/home/user/proj/.nexus/state.db")
+        );
     }
 }

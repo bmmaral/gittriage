@@ -60,9 +60,9 @@ Nexus is a **Rust-first repository fleet intelligence CLI** (`crates/`). This fi
 - [x] Add `CONTRIBUTING.md`
 - [x] Add `CODE_OF_CONDUCT.md`
 - [x] Add `CHANGELOG.md`
-- [ ] Fill in GitHub repo description
-- [ ] Add GitHub topics
-- [ ] Add homepage/docs link when ready
+- [x] Fill in GitHub repo description
+- [x] Add GitHub topics
+- [x] Add homepage/docs link when ready
 
 ### Documentation quality
 - [x] Expand `README.md` with:
