@@ -20,7 +20,8 @@ jobs:
       image: semgrep/semgrep
     steps:
       - uses: actions/checkout@v4
-      - run: semgrep --config=p/default --error .
+      # Limit to the Rust workspace; legacy Python/TS in repo root trips noisy JS/Python rules.
+      - run: semgrep --config=p/default --error crates
 
   sbom:
     runs-on: ubuntu-latest

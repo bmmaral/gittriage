@@ -157,17 +157,18 @@ pub fn merge_base_between_local_clones(repo_a: &Path, repo_b: &Path) -> Result<M
     }
 
     let mb = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let detail = format!(
+        "merge-base between {} and HEAD of {} ({}) is {}",
+        repo_a.display(),
+        repo_b.display(),
+        other_head,
+        mb
+    );
     Ok(MergeBaseHint {
         other_head,
         objects_shared: true,
-        merge_base_oid: Some(mb.clone()),
-        detail: format!(
-            "merge-base between {} and HEAD of {} ({}) is {}",
-            repo_a.display(),
-            repo_b.display(),
-            other_head,
-            mb
-        ),
+        merge_base_oid: Some(mb),
+        detail,
     })
 }
 

@@ -60,6 +60,8 @@ jobs:
       - name: Create reminder issue if inactive
         if: contains(steps.inactivity.outputs.json, '"inactive": true')
         uses: actions/github-script@v7
+        env:
+          JSON: ${{ steps.inactivity.outputs.json }}
         with:
           script: |
             const data = JSON.parse(process.env.JSON);
@@ -80,5 +82,3 @@ jobs:
               body: `### Project Activity Reminder\n\n- Last commit: ${last}\n- Days inactive: ${days}\n\n#### Next Steps\n${next}\n\nRun locally:\n\n\`\`\`bash\n# Status\nnexus status\n# Analyze\nnexus analyze\n# Timeline\nnexus timeline\n\`\`\``,
               labels: ['reminder','automated']
             });
-          env:
-            JSON: ${{ steps.inactivity.outputs.json }}
