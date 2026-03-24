@@ -82,7 +82,7 @@ nexus plan --write plan.json --external
 
 Render markdown or JSON reports from the current inventory (plan is rebuilt in memory; does not require a prior `plan --write`).
 
-**Stable markdown sections (in order):** top-level title `Nexus Report`, run metadata bullets, then per cluster: `## {label}`, cluster metadata bullets, `### Scores`, `### Evidence`, `### Actions`. Tools that parse reports should key off these headings.
+**Stable markdown sections (in order):** top-level title `Nexus Report`, run metadata bullets, optional `## Warnings` (ambiguous / low-confidence clusters), then per cluster: `## {label}`, cluster metadata bullets, `### Scores`, `### Score explanations`, `### Evidence`, `### Actions`. Tools that parse reports should key off these headings.
 
 Example:
 

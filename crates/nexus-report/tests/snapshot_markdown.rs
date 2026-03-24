@@ -53,6 +53,9 @@ fn fixture_plan() -> PlanDocument {
                 target_id: "clone-1".into(),
                 reason: "test".into(),
                 commands: vec![],
+                evidence_summary: None,
+                confidence: None,
+                risk_note: None,
             }],
         }],
     }

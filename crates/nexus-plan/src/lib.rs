@@ -156,12 +156,64 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<C
             enrich_merge_base_evidence(&mut cluster, &cluster_clones);
         }
 
+        append_non_canonical_clone_evidence(&mut cluster, &cluster_clones);
+
         let actions = build_actions(&cluster, &cluster_clones, &cluster_remotes);
         plans.push(ClusterPlan { cluster, actions });
     }
 
     plans.sort_by(|a, b| a.cluster.label.cmp(&b.cluster.label));
     plans
+}
+
+fn append_non_canonical_clone_evidence(cluster: &mut ClusterRecord, clones: &[CloneRecord]) {
+    let Some(canonical_id) = cluster.canonical_clone_id.as_ref() else {
+        return;
+    };
+    let Some(canonical) = clones.iter().find(|c| &c.id == canonical_id) else {
+        return;
+    };
+    for clone in clones {
+        if &clone.id == canonical_id {
+            continue;
+        }
+        let detail = explain_non_canonical_clone(clone, canonical);
+        cluster.evidence.push(ev(
+            &clone.id,
+            MemberKind::Clone,
+            "not_canonical_clone",
+            0.0,
+            &detail,
+        ));
+    }
+}
+
+fn explain_non_canonical_clone(c: &CloneRecord, canon: &CloneRecord) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match (c.last_commit_at, canon.last_commit_at) {
+        (Some(tc), Some(tn)) if tc < tn => {
+            parts.push(format!(
+                "last commit {} older than canonical {}",
+                tc.format("%Y-%m-%d"),
+                tn.format("%Y-%m-%d")
+            ));
+        }
+        (None, Some(_)) => {
+            parts.push("no recorded last commit on this clone; canonical has activity".into());
+        }
+        (Some(_), None) => {
+            parts.push("planner still preferred the other clone as canonical".into());
+        }
+        _ => {}
+    }
+    if c.is_dirty && !canon.is_dirty {
+        parts.push("dirty worktree vs clean canonical".into());
+    }
+    if parts.is_empty() {
+        "ranked below canonical on planner tie-break (freshness, git metadata)".into()
+    } else {
+        parts.join("; ")
+    }
 }
 
 fn enrich_merge_base_evidence(cluster: &mut ClusterRecord, clones: &[CloneRecord]) {
@@ -378,6 +430,17 @@ fn assess_cluster(
         ClusterStatus::Resolved
     };
 
+    if matches!(status, ClusterStatus::Ambiguous) {
+        let (sid, sk) = canonical_subject_tuple(canonical_clone, canonical_remote, clones, remotes);
+        evidence.push(ev(
+            sid,
+            sk,
+            "ambiguous_cluster",
+            0.0,
+            "cluster confidence is below threshold; canonical selection is tentative—verify before cleanup or automation",
+        ));
+    }
+
     (
         normalize_scores(scores),
         evidence,
@@ -388,6 +451,34 @@ fn assess_cluster(
     )
 }
 
+/// Subject for cluster-level evidence when no canonical clone exists.
+fn canonical_subject_tuple<'a>(
+    canonical_clone: Option<&'a CloneRecord>,
+    canonical_remote: Option<&'a RemoteRecord>,
+    clones: &'a [CloneRecord],
+    remotes: &'a [RemoteRecord],
+) -> (&'a str, MemberKind) {
+    if let Some(c) = canonical_clone {
+        return (c.id.as_str(), MemberKind::Clone);
+    }
+    if let Some(r) = canonical_remote {
+        return (r.id.as_str(), MemberKind::Remote);
+    }
+    if let Some(c) = clones.first() {
+        return (c.id.as_str(), MemberKind::Clone);
+    }
+    if let Some(r) = remotes.first() {
+        return (r.id.as_str(), MemberKind::Remote);
+    }
+    ("cluster", MemberKind::Clone)
+}
+
+struct ActionExtras<'a> {
+    evidence_summary: Option<&'a str>,
+    confidence: Option<f64>,
+    risk_note: Option<&'a str>,
+}
+
 fn build_actions(
     cluster: &ClusterRecord,
     clones: &[CloneRecord],
@@ -396,7 +487,7 @@ fn build_actions(
     let mut actions = Vec::new();
 
     if matches!(cluster.status, ClusterStatus::Ambiguous) {
-        actions.push(action(
+        actions.push(plan_action(
             Priority::High,
             ActionType::ReviewAmbiguousCluster,
             cluster
@@ -410,58 +501,94 @@ fn build_actions(
                 .or_else(|| cluster.canonical_remote_id.clone())
                 .unwrap_or_else(|| "unknown".into()),
             "Cluster confidence is low; manual review required",
+            ActionExtras {
+                evidence_summary: Some("see `ambiguous_cluster` and related evidence"),
+                confidence: Some(cluster.confidence),
+                risk_note: Some(
+                    "acting on canonical or duplicates may be wrong until the cluster is disambiguated",
+                ),
+            },
         ));
     }
 
     if clones.len() > 1 {
         for clone in clones {
             if Some(&clone.id) != cluster.canonical_clone_id.as_ref() {
-                actions.push(action(
+                actions.push(plan_action(
                     Priority::High,
                     ActionType::ArchiveLocalDuplicate,
                     MemberKind::Clone,
                     clone.id.clone(),
                     "Lower-priority duplicate clone in same cluster",
+                    ActionExtras {
+                        evidence_summary: Some("see `not_canonical_clone` evidence for this clone"),
+                        confidence: Some(0.65),
+                        risk_note: Some(
+                            "confirm no unpushed branches or local-only work before removing",
+                        ),
+                    },
                 ));
             }
         }
     }
 
-    let canonical = cluster.scores.oss_readiness;
-    if canonical < 70.0 {
+    let publish_score = cluster.scores.oss_readiness;
+    if publish_score < 70.0 {
         if let Some(clone_id) = cluster.canonical_clone_id.clone() {
-            actions.push(action(
+            actions.push(plan_action(
                 Priority::Medium,
                 ActionType::AddLicense,
                 MemberKind::Clone,
                 clone_id.clone(),
-                "OSS readiness below threshold: ensure license metadata exists",
+                "Publish readiness below threshold: ensure license metadata exists",
+                ActionExtras {
+                    evidence_summary: Some("license SPDX / file signals in scan"),
+                    confidence: Some(0.55),
+                    risk_note: Some("handoff and publication often require explicit licensing"),
+                },
             ));
-            actions.push(action(
+            actions.push(plan_action(
                 Priority::Medium,
                 ActionType::AddCi,
                 MemberKind::Clone,
                 clone_id.clone(),
-                "OSS readiness below threshold: add CI baseline",
+                "Publish readiness below threshold: add CI baseline",
+                ActionExtras {
+                    evidence_summary: Some("no strong CI signal from scan heuristics"),
+                    confidence: Some(0.5),
+                    risk_note: Some("CI gaps increase regression risk for collaborators"),
+                },
             ));
-            actions.push(action(
+            actions.push(plan_action(
                 Priority::Medium,
                 ActionType::RunSecurityScans,
                 MemberKind::Clone,
                 clone_id,
-                "OSS readiness below threshold: run semgrep/gitleaks/syft",
+                "Publish readiness below threshold: run semgrep/gitleaks/syft",
+                ActionExtras {
+                    evidence_summary: Some("optional adapters when installed (`nexus tools`)"),
+                    confidence: Some(0.5),
+                    risk_note: Some("scanners can be noisy; triage findings before acting"),
+                },
             ));
         }
     }
 
     if remotes.is_empty() && !clones.is_empty() {
         if let Some(clone_id) = cluster.canonical_clone_id.clone() {
-            actions.push(action(
+            actions.push(plan_action(
                 Priority::Medium,
                 ActionType::CreateRemoteRepo,
                 MemberKind::Clone,
                 clone_id,
                 "Canonical local project has no linked remote",
+                ActionExtras {
+                    evidence_summary: Some("no remote rows linked from this cluster"),
+                    confidence: Some(0.45),
+                    risk_note: Some(
+                        "may be intentional offline work; verify before creating or linking remotes",
+                    ),
+                },
             ));
         }
     }
@@ -469,12 +596,13 @@ fn build_actions(
     actions
 }
 
-fn action(
+fn plan_action(
     priority: Priority,
     action_type: ActionType,
     target_kind: MemberKind,
     target_id: String,
     reason: &str,
+    extras: ActionExtras<'_>,
 ) -> PlanAction {
     PlanAction {
         id: format!("action-{}", Uuid::new_v4()),
@@ -484,6 +612,9 @@ fn action(
         target_id,
         reason: reason.into(),
         commands: Vec::new(),
+        evidence_summary: extras.evidence_summary.map(str::to_string),
+        confidence: extras.confidence,
+        risk_note: extras.risk_note.map(str::to_string),
     }
 }
 
@@ -587,5 +718,40 @@ mod tests {
         };
         let plans = resolve_clusters(&snapshot, false);
         assert_eq!(plans.len(), 2);
+    }
+
+    #[test]
+    fn non_canonical_clone_has_not_canonical_evidence() {
+        let mut older = sample_clone("clone-old", "proj");
+        older.last_commit_at = Some(Utc::now() - chrono::Duration::days(500));
+        let newer = sample_clone("clone-new", "proj");
+        let remote = sample_github_remote("remote-1", "github.com/acme/proj");
+        let snapshot = InventorySnapshot {
+            clones: vec![older, newer],
+            remotes: vec![remote.clone()],
+            links: vec![
+                CloneRemoteLink {
+                    clone_id: "clone-old".into(),
+                    remote_id: remote.id.clone(),
+                    relationship: "origin".into(),
+                },
+                CloneRemoteLink {
+                    clone_id: "clone-new".into(),
+                    remote_id: remote.id.clone(),
+                    relationship: "origin".into(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        let plans = resolve_clusters(&snapshot, false);
+        assert_eq!(plans.len(), 1);
+        let ev = &plans[0].cluster.evidence;
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == "not_canonical_clone" && e.subject_id == "clone-old"),
+            "expected not_canonical_clone for older clone: {:?}",
+            ev
+        );
     }
 }

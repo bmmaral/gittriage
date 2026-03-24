@@ -41,7 +41,10 @@
           "target_kind": "Clone",
           "target_id": "clone-002",
           "reason": "Older duplicate with lower canonical score",
-          "commands": []
+          "commands": [],
+          "evidence_summary": "see `not_canonical_clone` evidence for clone-002",
+          "confidence": 0.65,
+          "risk_note": "confirm no unpushed work before removing"
         }
       ]
     }

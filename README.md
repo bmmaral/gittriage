@@ -10,7 +10,7 @@ This is **not** a web dashboard or internal developer portal; the product stays 
 
 **Who it’s not for:** enterprises wanting a hosted catalog, approval workflows, or compliance-first buying—those are different products.
 
-Docs: [`docs/PRODUCT_STRATEGY.md`](docs/PRODUCT_STRATEGY.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SCORING.md`](docs/SCORING.md), [`docs/CLI.md`](docs/CLI.md), [`docs/PLAN_SCHEMA.md`](docs/PLAN_SCHEMA.md), [`docs/CONFIG.md`](docs/CONFIG.md), [`docs/EXTERNAL_TOOLS.md`](docs/EXTERNAL_TOOLS.md), [`docs/FAQ.md`](docs/FAQ.md). Backlog: [`TODO_updated.md`](TODO_updated.md) (current), [`TODO.md`](TODO.md) (earlier tracker).
+Docs: [`docs/PRODUCT_STRATEGY.md`](docs/PRODUCT_STRATEGY.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SCORING.md`](docs/SCORING.md), [`docs/CLI.md`](docs/CLI.md), [`docs/PLAN_SCHEMA.md`](docs/PLAN_SCHEMA.md), [`docs/CONFIG.md`](docs/CONFIG.md), [`docs/EXTERNAL_TOOLS.md`](docs/EXTERNAL_TOOLS.md), [`docs/FAQ.md`](docs/FAQ.md), [`docs/EXAMPLES.md`](docs/EXAMPLES.md). Backlog: [`TODO_updated.md`](TODO_updated.md) (current), [`TODO.md`](TODO.md) (earlier tracker).
 
 ## Install / build
 

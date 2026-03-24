@@ -78,11 +78,11 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 - [ ] Ensure optional profiles do not distort the default headline experience
 
 ### Evidence quality
-- [ ] Add merge-base evidence as a first-class signal for canonical confidence
+- [x] Add merge-base evidence as a first-class signal for canonical confidence (contributes to canonical score + evidence; see `merge_base` kind)
 - [ ] Add stronger duplicate-detection heuristics beyond name matching
-- [ ] Add explicit evidence for why a clone was **not** selected as canonical
-- [ ] Add protection against false canonical selection in ambiguous clusters
-- [ ] Make score explanations mandatory in report output
+- [x] Add explicit evidence for why a clone was **not** selected as canonical (`not_canonical_clone`)
+- [x] Add protection against false canonical selection in ambiguous clusters (`ambiguous_cluster` evidence + report **Warnings**)
+- [x] Make score explanations mandatory in report output (`### Score explanations` in markdown)
 - [ ] Version scoring rules separately from app version if necessary
 
 ---
@@ -90,11 +90,11 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 ## P2 — Planning engine and action quality
 
 ### Deterministic planning
-- [ ] Ensure every plan action includes:
-  - [ ] reason
-  - [ ] evidence summary
-  - [ ] confidence
-  - [ ] risk/trade-off note
+- [x] Ensure every plan action includes:
+  - [x] reason
+  - [x] evidence summary (optional JSON field `evidence_summary`, populated for key actions)
+  - [x] confidence (optional `confidence` on `PlanAction`)
+  - [x] risk/trade-off note (optional `risk_note` on `PlanAction`)
 - [ ] Add explicit handling for:
   - [ ] remote-only repos
   - [ ] local-only repos
@@ -115,9 +115,9 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 ### Core CLI polish
 - [x] Ensure `scan -> score -> plan -> report` is the documented golden path (`README.md`, `docs/CLI.md`)
 - [ ] Add consistent machine-readable output options where needed
-- [ ] Improve `doctor` output with actionable remediation
-- [ ] Improve `report` readability for large inventories
-- [ ] Add clear warning language for ambiguous plans and low-confidence scores
+- [x] Improve `doctor` output with actionable remediation
+- [x] Improve `report` readability for large inventories (score labels, explanations, action sub-bullets)
+- [x] Add clear warning language for ambiguous plans and low-confidence scores (report **Warnings** section)
 
 ### New commands
 - [ ] Add `nexus explain <cluster|repo|clone>`
@@ -180,7 +180,7 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
   - [ ] stale-but-important repos
   - [ ] override/pinning behavior
 - [ ] Add snapshot tests for JSON plan/report stability
-- [ ] Add regression tests for scoring explanations and evidence rendering
+- [x] Add regression tests for scoring explanations and evidence rendering (markdown snapshot; `not_canonical_clone` planner test)
 - [ ] Add tests for adapter absence/failure cases across all optional profiles
 
 ### CI/CD
@@ -224,11 +224,12 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 - [x] Write a sharper 30-second pitch around repo fleet triage (`README.md`, `docs/PRODUCT_STRATEGY.md`)
 - [x] Add a clear “Who this is for / not for” section to README
 - [x] Add a “Why not a dashboard?” rationale briefly in docs/FAQ
-- [ ] Add examples for:
-  - [ ] duplicate resolution
-  - [ ] recoverability scoring
-  - [ ] publish-readiness profile
-  - [ ] AI optional flow
+- [x] Add examples for:
+  - [x] duplicate resolution
+  - [x] recoverability scoring
+  - [x] publish-readiness profile
+  - [x] AI optional flow
+  (see `docs/EXAMPLES.md`)
 
 ### Internal clarity
 - [x] Keep architecture docs honest about what is experimental (`docs/ARCHITECTURE.md`, `docs/CLI.md`)

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use nexus_core::{ClusterPlan, PlanDocument};
+use nexus_core::{ClusterPlan, ClusterRecord, ClusterStatus, PlanDocument};
 
 pub fn render_markdown(plan: &PlanDocument) -> Result<String> {
     let mut out = String::new();
@@ -11,11 +11,46 @@ pub fn render_markdown(plan: &PlanDocument) -> Result<String> {
         plan.clusters.len()
     ));
 
+    render_plan_warnings(&mut out, plan);
+
     for cluster_plan in &plan.clusters {
         render_cluster(&mut out, cluster_plan);
     }
 
     Ok(out)
+}
+
+fn render_plan_warnings(out: &mut String, plan: &PlanDocument) {
+    let mut lines: Vec<String> = Vec::new();
+    for cp in &plan.clusters {
+        let c = &cp.cluster;
+        if matches!(
+            c.status,
+            ClusterStatus::Ambiguous | ClusterStatus::ManualReview
+        ) {
+            lines.push(format!(
+                "- **{}** (`{}`): status `{:?}` — treat canonical choice as **tentative** until you verify remotes and local-only work.",
+                c.label, c.id, c.status
+            ));
+        } else if c.confidence < 0.6 {
+            lines.push(format!(
+                "- **{}** (`{}`): confidence `{:.2}` — below the usual resolved threshold; double-check evidence before acting.",
+                c.label, c.id, c.confidence
+            ));
+        }
+    }
+    if lines.is_empty() {
+        return;
+    }
+    out.push_str("## Warnings\n\n");
+    out.push_str(
+        "_These clusters need extra human judgment; Nexus does not mutate repos automatically._\n\n",
+    );
+    for line in lines {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out.push('\n');
 }
 
 fn render_cluster(out: &mut String, cluster_plan: &ClusterPlan) {
@@ -33,16 +68,18 @@ fn render_cluster(out: &mut String, cluster_plan: &ClusterPlan) {
 
     out.push_str("### Scores\n\n");
     out.push_str(&format!(
-        "- Canonical: `{:.1}`\n- Usability: `{:.1}`\n- OSS readiness: `{:.1}`\n- Risk: `{:.1}`\n\n",
+        "- Canonical confidence: `{:.1}` (`scores.canonical`)\n- Repo health: `{:.1}` (`scores.usability`)\n- Publish readiness: `{:.1}` (`scores.oss_readiness`)\n- Maintenance risk: `{:.1}` (`scores.risk`)\n\n",
         cluster.scores.canonical,
         cluster.scores.usability,
         cluster.scores.oss_readiness,
         cluster.scores.risk
     ));
 
+    render_score_explanations(out, cluster);
+
     out.push_str("### Evidence\n\n");
     if cluster.evidence.is_empty() {
-        out.push_str("- none\n\n");
+        out.push_str("- _(none — unexpected; file an issue if reproducible)_\n\n");
     } else {
         for ev in &cluster.evidence {
             out.push_str(&format!(
@@ -62,7 +99,37 @@ fn render_cluster(out: &mut String, cluster_plan: &ClusterPlan) {
                 "- `{:?}` `{:?}` target=`{}` — {}\n",
                 action.priority, action.action_type, action.target_id, action.reason
             ));
+            if let Some(ref s) = action.evidence_summary {
+                out.push_str(&format!("  - Evidence: {s}\n"));
+            }
+            if let Some(c) = action.confidence {
+                out.push_str(&format!("  - Action confidence: `{c:.2}`\n"));
+            }
+            if let Some(ref r) = action.risk_note {
+                out.push_str(&format!("  - Risk / trade-off: {r}\n"));
+            }
         }
         out.push('\n');
     }
+}
+
+/// Deterministic copy that ties headline numbers to the evidence list (always emitted).
+fn render_score_explanations(out: &mut String, cluster: &ClusterRecord) {
+    out.push_str("### Score explanations\n\n");
+    out.push_str(&format!(
+        "- **Canonical confidence (`{:.1}`):** reflects remote URL agreement, clone freshness, git metadata, and optional `merge_base` lines in Evidence below.\n",
+        cluster.scores.canonical
+    ));
+    out.push_str(&format!(
+        "- **Repo health (`{:.1}`):** reflects manifest/readme signals and similar scan-time cues (`manifest_present`, `readme_present`, …).\n",
+        cluster.scores.usability
+    ));
+    out.push_str(&format!(
+        "- **Publish readiness (`{:.1}`):** reflects license and GitHub metadata heuristics—not a full OSS audit (`license_present`, remote fork/archived flags, …).\n",
+        cluster.scores.oss_readiness
+    ));
+    out.push_str(&format!(
+        "- **Maintenance risk (`{:.1}`):** higher when clusters are ambiguous, duplicated, or missing remotes (`multiple_clones`, `ambiguous_cluster`, …).\n\n",
+        cluster.scores.risk
+    ));
 }

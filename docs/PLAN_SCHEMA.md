@@ -57,6 +57,11 @@ Each element of `clusters` is:
 | `target_id` | string |
 | `reason` | string |
 | `commands` | array of strings (often empty in read-only mode) |
+| `evidence_summary` | optional string — short pointer to motivating evidence |
+| `confidence` | optional number — planner confidence for this action, 0.0–1.0 |
+| `risk_note` | optional string — trade-off or caution |
+
+Omitted optional fields deserialize as null/absent and remain backward compatible for older `plan.json` files.
 
 ### Example (excerpt)
 

@@ -366,6 +366,12 @@ fn cmd_doctor(bundle: &ConfigBundle) -> Result<()> {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "(defaults — no nexus.toml found)".into())
     );
+    if bundle.source_path.is_none() {
+        println!(
+            "  → tip: copy `nexus.toml.example` to `./nexus.toml` or set `{}`",
+            nexus_config::ENV_NEXUS_CONFIG
+        );
+    }
     println!("db_path (config): {}", config.db_path.display());
     println!(
         "db_path (effective): {}",
@@ -382,20 +388,40 @@ fn cmd_doctor(bundle: &ConfigBundle) -> Result<()> {
         }
         Err(e) => {
             println!("db open: FAILED ({e:#})");
+            println!(
+                "  → fix: ensure the parent directory exists and is writable; check `db_path` in config"
+            );
+            println!("  → see: docs/CONFIG.md");
         }
     }
 
     println!("default roots: {:?}", config.default_roots);
-    println!("gh in PATH: {}", which::which("gh").is_ok());
-    println!("git in PATH: {}", which::which("git").is_ok());
+    if config.default_roots.is_empty() {
+        println!(
+            "  → tip: set `default_roots` in nexus.toml or pass paths to `nexus scan <path> ...`"
+        );
+    }
+
+    let gh_ok = which::which("gh").is_ok();
+    println!("gh in PATH: {gh_ok}");
+    if !gh_ok {
+        println!(
+            "  → optional: install GitHub CLI for `scan --github-owner` (docs/EXTERNAL_TOOLS.md)"
+        );
+    }
+    let git_ok = which::which("git").is_ok();
+    println!("git in PATH: {git_ok}");
+    if !git_ok {
+        println!("  → fix: install git; Nexus uses it for clone metadata and merge-base evidence");
+    }
     match std::process::Command::new("cc").arg("--version").output() {
         Ok(out) if out.status.success() => println!("cc (C linker): ok"),
         _ => {
             println!("cc (C linker): missing or not functional");
             #[cfg(target_os = "macos")]
-            println!("  fix: install Xcode CLT (`xcode-select --install`) so `cargo` can link");
+            println!("  → fix: install Xcode CLT (`xcode-select --install`) so `cargo` / rusqlite can link");
             #[cfg(not(target_os = "macos"))]
-            println!("  fix: install a C toolchain (e.g. build-essential) so `cargo` can link");
+            println!("  → fix: install a C toolchain (e.g. build-essential, clang) for rusqlite");
         }
     }
     let scanners: Vec<_> = nexus_adapters::probe_all()
@@ -409,6 +435,9 @@ fn cmd_doctor(bundle: &ConfigBundle) -> Result<()> {
         scanners.join(", ")
     };
     println!("external scanners on PATH: {scanner_line}");
+    if scanners.is_empty() {
+        println!("  → optional: install tools listed in `nexus tools` for `plan --external`");
+    }
     if let Ok(ver) = std::process::Command::new("rustc")
         .arg("--version")
         .output()

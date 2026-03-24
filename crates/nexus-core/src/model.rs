@@ -138,6 +138,15 @@ pub struct PlanAction {
     pub target_id: String,
     pub reason: String,
     pub commands: Vec<String>,
+    /// Short summary of evidence motivating this action (optional in JSON for backward compatibility).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_summary: Option<String>,
+    /// Planner confidence in this recommendation, 0.0–1.0 (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    /// Risk or trade-off the user should weigh (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
