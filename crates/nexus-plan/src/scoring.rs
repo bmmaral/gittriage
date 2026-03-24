@@ -7,7 +7,7 @@ use nexus_core::{CloneRecord, ClusterStatus, EvidenceItem, MemberKind, RemoteRec
 use uuid::Uuid;
 
 /// Bump when rule weights or evidence kinds change materially (keep in sync with docs).
-pub const SCORING_RULES_VERSION: u32 = 2;
+pub const SCORING_RULES_VERSION: u32 = 3;
 
 /// Extra canonical confidence when `git merge-base` finds a common ancestor between two clones.
 pub const MERGE_BASE_CANONICAL_BONUS: f64 = 8.0;

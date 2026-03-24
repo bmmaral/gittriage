@@ -79,7 +79,7 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 
 ### Evidence quality
 - [x] Add merge-base evidence as a first-class signal for canonical confidence (contributes to canonical score + evidence; see `merge_base` kind)
-- [ ] Add stronger duplicate-detection heuristics beyond name matching
+- [x] Add stronger duplicate-detection heuristics beyond name matching (shared `fingerprint` across clusters; same display name split across clusters)
 - [x] Add explicit evidence for why a clone was **not** selected as canonical (`not_canonical_clone`)
 - [x] Add protection against false canonical selection in ambiguous clusters (`ambiguous_cluster` evidence + report **Warnings**)
 - [x] Make score explanations mandatory in report output (`### Score explanations` in markdown)
@@ -98,9 +98,9 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 - [ ] Add explicit handling for:
   - [x] remote-only repos (`CloneLocalWorkspace` action + `remote_only_cluster` evidence)
   - [x] local-only repos (`CreateRemoteRepo` + `no_remote_linked` / `local_only_cluster` evidence)
-  - [ ] pivoted repos
-  - [ ] stale-but-important repos
-  - [ ] ambiguous duplicate clusters
+  - [x] pivoted repos (heuristic: `duplicate_name_split_clusters` when same display name maps to different clusters / remotes)
+  - [x] stale-but-important repos (`stale_but_artifacted` when old last commit but manifest+README present)
+  - [x] ambiguous duplicate clusters (`name_bucket_duplicate_cluster` for multi-clone name-only buckets; cross-cluster hints above)
 - [ ] Decide whether plan priorities are global, profile-based, or both
 
 ### Overrides and user intent

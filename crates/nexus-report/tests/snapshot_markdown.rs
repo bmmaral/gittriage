@@ -7,7 +7,7 @@ use nexus_core::{
 fn fixture_plan() -> PlanDocument {
     PlanDocument {
         schema_version: 1,
-        scoring_rules_version: 2,
+        scoring_rules_version: 3,
         generated_at: "2026-01-01T12:00:00Z"
             .parse::<DateTime<Utc>>()
             .expect("fixture time"),

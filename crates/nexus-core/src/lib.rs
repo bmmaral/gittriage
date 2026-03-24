@@ -13,7 +13,7 @@ mod golden_plan_tests {
         let raw = include_str!("../../../fixtures/golden/plan-v1.json");
         let doc: PlanDocument = serde_json::from_str(raw).expect("parse golden fixture");
         assert_eq!(doc.schema_version, 1);
-        assert_eq!(doc.scoring_rules_version, 2);
+        assert_eq!(doc.scoring_rules_version, 3);
         assert_eq!(doc.generated_by, "nexus 0.1.0");
         assert_eq!(doc.clusters.len(), 1);
         let serialized = serde_json::to_string(&doc).expect("serialize");

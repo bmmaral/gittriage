@@ -139,3 +139,12 @@ Every important score movement should be tied to evidence items:
 ```
 
 Scores without supporting evidence are a bug in the engine or report layer.
+
+**Rule set v3+** adds zero-delta **triage hints** (not score drivers) for inventory shape:
+
+| Kind | Meaning |
+| --- | --- |
+| `name_bucket_duplicate_cluster` | Several clones share a **name-only** cluster bucket |
+| `fingerprint_split_clusters` | Same scan **fingerprint** appears in more than one cluster |
+| `duplicate_name_split_clusters` | Same **display name** ended up in multiple clusters (fork/pivot/weak signal) |
+| `stale_but_artifacted` | Canonical clone’s last commit is very old but manifest + README exist |

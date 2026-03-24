@@ -3,7 +3,7 @@ mod scoring;
 pub use scoring::SCORING_RULES_VERSION;
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use nexus_core::{
     ActionType, CloneRecord, ClusterMember, ClusterPlan, ClusterRecord, ClusterStatus,
     EvidenceItem, InventorySnapshot, MemberKind, PlanAction, PlanDocument, Priority, RemoteRecord,
@@ -100,6 +100,7 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<C
 
     let mut plans = Vec::new();
     for (cluster_key, (cluster_clones, cluster_remotes)) in buckets {
+        let cluster_key_for_hints = cluster_key.clone();
         let label = derive_label(&cluster_clones, &cluster_remotes);
         let mut eval = crate::scoring::evaluate_cluster(&cluster_clones, &cluster_remotes);
         eval.scores = crate::scoring::finalize_scores(eval.scores);
@@ -162,13 +163,200 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, merge_base: bool) -> Vec<C
         }
 
         append_non_canonical_clone_evidence(&mut cluster, &cluster_clones);
+        attach_cluster_shape_hints(&mut cluster, &cluster_clones, &cluster_key_for_hints);
 
         let actions = build_actions(&cluster, &cluster_clones, &cluster_remotes);
         plans.push(ClusterPlan { cluster, actions });
     }
 
+    attach_cross_cluster_duplicate_hints(&mut plans, snapshot);
+
     plans.sort_by(|a, b| a.cluster.label.cmp(&b.cluster.label));
     plans
+}
+
+/// In-cluster signals: weak name-only clustering and “stale but still looks like a project.”
+fn attach_cluster_shape_hints(
+    cluster: &mut ClusterRecord,
+    clones: &[CloneRecord],
+    cluster_key: &str,
+) {
+    if cluster_key.starts_with("name:") && clones.len() > 1 {
+        let (sid, sk) = evidence_subject_cluster(cluster);
+        cluster.evidence.push(ev(
+            &sid,
+            sk,
+            "name_bucket_duplicate_cluster",
+            0.0,
+            "multiple local clones grouped by display name only; confirm shared lineage before treating as duplicates",
+        ));
+    }
+
+    let Some(cid) = cluster.canonical_clone_id.as_ref() else {
+        return;
+    };
+    let Some(canon) = clones.iter().find(|c| &c.id == cid) else {
+        return;
+    };
+    if let Some(t) = canon.last_commit_at {
+        if Utc::now() - t > Duration::days(400)
+            && canon.manifest_kind.is_some()
+            && canon.readme_title.is_some()
+        {
+            cluster.evidence.push(ev(
+                cid,
+                MemberKind::Clone,
+                "stale_but_artifacted",
+                0.0,
+                "last commit is old but manifest and README are present—may be slow-cycle, archival, or still important; review before deprioritizing",
+            ));
+        }
+    }
+}
+
+fn evidence_subject_cluster(cluster: &ClusterRecord) -> (String, MemberKind) {
+    if let Some(ref id) = cluster.canonical_clone_id {
+        return (id.clone(), MemberKind::Clone);
+    }
+    for m in &cluster.members {
+        if m.kind == MemberKind::Clone {
+            return (m.id.clone(), MemberKind::Clone);
+        }
+    }
+    if let Some(m) = cluster.members.first() {
+        return (m.id.clone(), m.kind.clone());
+    }
+    ("cluster".into(), MemberKind::Clone)
+}
+
+fn snapshot_clone_normalized_urls(
+    snapshot: &InventorySnapshot,
+) -> HashMap<String, BTreeSet<String>> {
+    let remote_by_id: HashMap<String, &RemoteRecord> =
+        snapshot.remotes.iter().map(|r| (r.id.clone(), r)).collect();
+    let mut clone_urls: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for link in &snapshot.links {
+        let Some(remote) = remote_by_id.get(&link.remote_id) else {
+            continue;
+        };
+        clone_urls
+            .entry(link.clone_id.clone())
+            .or_default()
+            .insert(remote.normalized_url.clone());
+    }
+    clone_urls
+}
+
+/// Same fingerprint or same display name across **different** clusters (possible duplicate / pivot).
+fn attach_cross_cluster_duplicate_hints(plans: &mut [ClusterPlan], snapshot: &InventorySnapshot) {
+    let clone_cluster: HashMap<String, String> = plans
+        .iter()
+        .flat_map(|cp| {
+            cp.cluster
+                .members
+                .iter()
+                .filter(|m| m.kind == MemberKind::Clone)
+                .map(|m| (m.id.clone(), cp.cluster.id.clone()))
+        })
+        .collect();
+
+    let mut fp_to_clusters: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for c in &snapshot.clones {
+        let Some(fp) = c
+            .fingerprint
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let Some(cluster_id) = clone_cluster.get(&c.id) else {
+            continue;
+        };
+        fp_to_clusters
+            .entry(fp.to_string())
+            .or_default()
+            .insert(cluster_id.clone());
+    }
+
+    for (_fp, cluster_ids) in fp_to_clusters {
+        if cluster_ids.len() < 2 {
+            continue;
+        }
+        let ids: Vec<String> = cluster_ids.into_iter().collect();
+        let detail = format!(
+            "scan fingerprint matches across clusters `{}` — likely duplicate trees split by name/url buckets; verify before cleanup",
+            ids.join("`, `")
+        );
+        for cid in &ids {
+            if let Some(cp) = plans.iter_mut().find(|p| p.cluster.id == *cid) {
+                let (sid, sk) = evidence_subject_cluster(&cp.cluster);
+                cp.cluster
+                    .evidence
+                    .push(ev(&sid, sk, "fingerprint_split_clusters", 0.0, &detail));
+            }
+        }
+    }
+
+    let mut by_display: HashMap<String, Vec<&CloneRecord>> = HashMap::new();
+    for c in &snapshot.clones {
+        by_display
+            .entry(sanitize_name(&c.display_name))
+            .or_default()
+            .push(c);
+    }
+
+    let clone_urls = snapshot_clone_normalized_urls(snapshot);
+
+    for (_norm, group) in by_display {
+        if group.len() < 2 {
+            continue;
+        }
+        let cluster_ids: BTreeSet<String> = group
+            .iter()
+            .filter_map(|c| clone_cluster.get(&c.id).cloned())
+            .collect();
+        if cluster_ids.len() < 2 {
+            continue;
+        }
+
+        let url_set: BTreeSet<String> = group
+            .iter()
+            .flat_map(|c| {
+                clone_urls
+                    .get(&c.id)
+                    .into_iter()
+                    .flat_map(|urls| urls.iter().cloned())
+            })
+            .collect();
+
+        let detail = if url_set.len() >= 2 {
+            format!(
+                "{} clones share display name `{}` but sit in different clusters with different remotes—possible fork/rename/pivot; reconcile origin URLs",
+                group.len(),
+                group[0].display_name
+            )
+        } else {
+            format!(
+                "{} clones share display name `{}` but sit in different clusters—weak clustering signal; confirm they are unrelated before merging inventory",
+                group.len(),
+                group[0].display_name
+            )
+        };
+
+        for cid in &cluster_ids {
+            if let Some(cp) = plans.iter_mut().find(|p| p.cluster.id == *cid) {
+                let (sid, sk) = evidence_subject_cluster(&cp.cluster);
+                cp.cluster.evidence.push(ev(
+                    &sid,
+                    sk,
+                    "duplicate_name_split_clusters",
+                    0.0,
+                    &detail,
+                ));
+            }
+        }
+    }
 }
 
 fn append_non_canonical_clone_evidence(cluster: &mut ClusterRecord, clones: &[CloneRecord]) {
@@ -496,7 +684,7 @@ fn ev(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use nexus_core::{CloneRemoteLink, ManifestKind};
 
     fn sample_clone(id: &str, name: &str) -> CloneRecord {
@@ -616,5 +804,118 @@ mod tests {
             "expected not_canonical_clone for older clone: {:?}",
             ev
         );
+    }
+
+    #[test]
+    fn name_bucket_multiple_clones_get_duplicate_name_hint() {
+        let mut a = sample_clone("a", "solo");
+        a.path = "/p1".into();
+        let mut b = sample_clone("b", "solo");
+        b.path = "/p2".into();
+        let snapshot = InventorySnapshot {
+            clones: vec![a, b],
+            remotes: vec![],
+            links: vec![],
+            ..Default::default()
+        };
+        let plans = resolve_clusters(&snapshot, false);
+        assert_eq!(plans.len(), 1);
+        assert!(
+            plans[0]
+                .cluster
+                .evidence
+                .iter()
+                .any(|e| e.kind == "name_bucket_duplicate_cluster"),
+            "{:?}",
+            plans[0].cluster.evidence
+        );
+    }
+
+    #[test]
+    fn stale_canonical_with_manifest_gets_artifact_hint() {
+        let mut c = sample_clone("c1", "proj");
+        c.last_commit_at = Some(Utc::now() - Duration::days(500));
+        let snapshot = InventorySnapshot {
+            clones: vec![c],
+            remotes: vec![],
+            links: vec![],
+            ..Default::default()
+        };
+        let plans = resolve_clusters(&snapshot, false);
+        assert!(
+            plans[0]
+                .cluster
+                .evidence
+                .iter()
+                .any(|e| e.kind == "stale_but_artifacted"),
+            "{:?}",
+            plans[0].cluster.evidence
+        );
+    }
+
+    #[test]
+    fn matching_fingerprint_across_clusters_emits_split_hint() {
+        let mut a = sample_clone("a", "name-a");
+        a.fingerprint = Some("fp-same-content".into());
+        let mut b = sample_clone("b", "name-b");
+        b.path = "/other".into();
+        b.fingerprint = Some("fp-same-content".into());
+        let snapshot = InventorySnapshot {
+            clones: vec![a, b],
+            remotes: vec![],
+            links: vec![],
+            ..Default::default()
+        };
+        let plans = resolve_clusters(&snapshot, false);
+        assert_eq!(plans.len(), 2);
+        for p in &plans {
+            assert!(
+                p.cluster
+                    .evidence
+                    .iter()
+                    .any(|e| e.kind == "fingerprint_split_clusters"),
+                "{:?}",
+                p.cluster.evidence
+            );
+        }
+    }
+
+    #[test]
+    fn same_display_name_different_origins_emit_duplicate_name_split() {
+        let r1 = sample_github_remote("r1", "github.com/acme/one");
+        let r2 = sample_github_remote("r2", "github.com/acme/two");
+        let mut c1 = sample_clone("c1", "mylib");
+        c1.path = "/m1".into();
+        let mut c2 = sample_clone("c2", "mylib");
+        c2.path = "/m2".into();
+        let snapshot = InventorySnapshot {
+            clones: vec![c1, c2],
+            remotes: vec![r1.clone(), r2.clone()],
+            links: vec![
+                CloneRemoteLink {
+                    clone_id: "c1".into(),
+                    remote_id: r1.id.clone(),
+                    relationship: "origin".into(),
+                },
+                CloneRemoteLink {
+                    clone_id: "c2".into(),
+                    remote_id: r2.id.clone(),
+                    relationship: "origin".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let plans = resolve_clusters(&snapshot, false);
+        assert_eq!(plans.len(), 2);
+        for p in &plans {
+            assert!(
+                p.cluster
+                    .evidence
+                    .iter()
+                    .any(|e| e.kind == "duplicate_name_split_clusters"),
+                "{:?}",
+                p.cluster.evidence
+            );
+        }
     }
 }
