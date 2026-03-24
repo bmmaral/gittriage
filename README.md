@@ -4,7 +4,7 @@
 
 **Before:** dozens of checkouts and remotes with unclear “source of truth,” risky for humans and agents. **After:** one SQLite-backed inventory, reproducible scores and a `plan.json`, and human-readable reports you can diff and review.
 
-This is **not** a web dashboard or internal developer portal; the product stays lightweight and deterministic. An optional **TUI** and **optional AI** explanations may come later; they do not define the core engine.
+This is **not** a web dashboard or internal developer portal; the product stays lightweight and deterministic. An optional **`nexus tui`** terminal browser sits on the same planner as `score`/`plan` (see `docs/CLI.md`). **Optional AI** explanations may come later; they do not define the core engine.
 
 **Who it’s for:** solo developers, freelancers, small teams, and AI-heavy workflows with lots of local clones—anyone who needs **which repos matter**, **which copy is canonical**, and **what to do next**, without platform overhead.
 

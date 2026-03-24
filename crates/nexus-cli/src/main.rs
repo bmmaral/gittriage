@@ -99,6 +99,15 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Interactive terminal UI: browse clusters, sort/filter, inspect evidence, pin hints, export plan JSON.
+    Tui {
+        /// Skip pairwise merge-base evidence between git clones.
+        #[arg(long)]
+        no_merge_base: bool,
+        /// Run optional scanners on canonical clones when installed.
+        #[arg(long)]
+        external: bool,
+    },
     /// Print scores, evidence, and actions for one cluster (by cluster query or member id).
     Explain {
         #[arg(long)]
@@ -236,6 +245,10 @@ fn main() -> Result<()> {
             external,
         } => cmd_export(&db, &bundle, with_plan, no_merge_base, external, output),
         Commands::Import { path, force } => cmd_import(&mut db, &path, force),
+        Commands::Tui {
+            no_merge_base,
+            external,
+        } => cmd_tui(&db, &bundle, no_merge_base, external),
         Commands::Explain {
             no_merge_base,
             external,
@@ -545,6 +558,28 @@ fn cmd_report(db: &Database, bundle: &ConfigBundle, format: ReportFormat) -> Res
     Ok(())
 }
 
+fn cmd_tui(
+    db: &Database,
+    bundle: &ConfigBundle,
+    no_merge_base: bool,
+    external: bool,
+) -> Result<()> {
+    let snapshot = db.load_inventory()?;
+    let opts = plan_build_opts(bundle, !no_merge_base);
+    let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+    }
+    let config_pins = bundle
+        .config
+        .planner
+        .canonical_pins
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    nexus_tui::run(plan, nexus_tui::TuiConfig { config_pins })
+}
+
 fn cmd_tools(format: ToolsFormat) -> Result<()> {
     let probes = nexus_adapters::probe_all();
     match format {
@@ -576,7 +611,12 @@ fn cmd_tools(format: ToolsFormat) -> Result<()> {
     Ok(())
 }
 
-fn cmd_apply(db: &Database, bundle: &ConfigBundle, dry_run: bool, format: ApplyFormat) -> Result<()> {
+fn cmd_apply(
+    db: &Database,
+    bundle: &ConfigBundle,
+    dry_run: bool,
+    format: ApplyFormat,
+) -> Result<()> {
     anyhow::ensure!(
         dry_run,
         "v1 is plan-only: use `nexus apply --dry-run` (mutating apply is disabled)"

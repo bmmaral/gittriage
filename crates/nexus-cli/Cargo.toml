@@ -29,6 +29,7 @@ nexus-github = { path = "../nexus-github" }
 nexus-plan = { path = "../nexus-plan" }
 nexus-report = { path = "../nexus-report" }
 nexus-scan = { path = "../nexus-scan" }
+nexus-tui = { path = "../nexus-tui" }
 
 [dev-dependencies]
 tempfile = "3"

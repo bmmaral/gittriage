@@ -15,6 +15,7 @@ These commands are the **intended stable surface** for repo fleet triage (names 
 | `export` | JSON envelope with `inventory` (optional `--with-plan`) for backup or transfer |
 | `import` | Replace DB inventory from export JSON (clears persisted plan); requires `--force` |
 | `explain` | One cluster’s scores, evidence, and actions (by cluster query or clone/remote id) |
+| `tui` | Interactive terminal table over the current plan (sort/filter, evidence, pin hint, export JSON); read-only |
 
 **Helpers / previews**
 
@@ -23,7 +24,7 @@ These commands are the **intended stable surface** for repo fleet triage (names 
 | `apply --dry-run` | Read-only preview: counts clusters and proposed actions (`--format json` supported). **Mutating apply is not implemented**; omitting `--dry-run` exits with an error. Stays as the v1 preview mechanism (not folded into `plan`/`report`). |
 | `serve` | **Experimental** read-only JSON over local SQLite for scripting. **Not** a dashboard, not multi-user, **unstable API** until release notes say otherwise. May move behind a feature flag later; default product remains the CLI. |
 
-New subcommands (e.g. `tui`) may be added alongside the core without removing these in v1.x.
+New subcommands may be added alongside the core without removing these in v1.x.
 
 See `docs/PRODUCT_STRATEGY.md` for roadmap and non-goals.
 
@@ -180,10 +181,32 @@ nexus explain cluster my-repo
 nexus explain clone clone-abc --format json
 ```
 
+### `nexus tui`
+
+Rebuilds the plan in-process (same `nexus.toml` `[planner]` fields and `--no-merge-base` / `--external` as `score`/`plan`). **Read-only:** no charts, no background services, no mutation of repos.
+
+| Key | Action |
+| --- | --- |
+| `j` / `↓`, `k` / `↑` | Move selection |
+| `s` | Cycle sort: label, canonical↓, risk↓, ambiguous-first |
+| `/` | Edit filter substring (label + `cluster_key`); Enter apply, Esc cancel |
+| `f` | Clear filter |
+| `e` | Full evidence list for selected cluster (Esc back) |
+| `p` | Show `canonical_pins` TOML snippet for the canonical clone |
+| `o` | Write full plan JSON to `./nexus-plan-tui-export.json` |
+| `?` | Help overlay (Esc or `q` closes) |
+| `q` | Quit |
+
+Requires a TTY; exits with an error if stdout is not interactive.
+
+```bash
+nexus tui
+nexus tui --no-merge-base --external
+```
+
 ## Planned next-layer commands
 
 (Not necessarily in the first tagged v1 release.)
 
-- `nexus tui` — minimal terminal UI for browsing clusters, sorting by score, overrides (see `docs/PRODUCT_STRATEGY.md`)
 - `nexus suggest` — AI-assisted suggestions grounded in Nexus output (optional)
 - Optional **AI**-enhanced natural language on top of deterministic `explain` (see `docs/PRODUCT_STRATEGY.md`)

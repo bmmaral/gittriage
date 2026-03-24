@@ -128,14 +128,14 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 - [ ] Decide whether `nexus suggest` ships in v1.x or later
 
 ### TUI
-- [ ] Design a minimal TUI over the same engine
-- [ ] Scope the first TUI release to:
-  - [ ] cluster browsing
-  - [ ] score sorting/filtering
-  - [ ] canonical evidence inspection
-  - [ ] manual pinning/override
-  - [ ] plan preview/export
-- [ ] Ensure the TUI does not become a pseudo-dashboard
+- [x] Design a minimal TUI over the same engine (`crates/nexus-tui`, `nexus tui`)
+- [x] Scope the first TUI release to:
+  - [x] cluster browsing
+  - [x] score sorting/filtering
+  - [x] canonical evidence inspection
+  - [x] manual pinning/override (TOML snippet + `*` marker for configured pins)
+  - [x] plan preview/export (`o` → `nexus-plan-tui-export.json`)
+- [x] Ensure the TUI does not become a pseudo-dashboard (table + text panes only; `docs/CLI.md`)
 
 ---
 

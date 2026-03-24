@@ -49,6 +49,9 @@ Clustering, scoring, and action generation.
 ### `nexus-report`
 Markdown / JSON rendering.
 
+### `nexus-tui`
+Ratatui-based **read-only** cluster browser (`nexus tui`): sort/filter, evidence list, `nexus.toml` pin snippet, plan JSON export. Same `PlanDocument` as `plan`/`report`; not a dashboard.
+
 ### `nexus-adapters`
 Optional CLI integrations (jscpd, semgrep, gitleaks, syft) for plan evidence.
 
@@ -71,7 +74,7 @@ nexus-plan resolves clusters
    ↓
 scores + evidence (`nexus score` or inside `nexus plan`)
    ↓
-plan.json + persisted plan row (`plan`) / report.md (`report`)
+plan.json + persisted plan row (`plan`) / report.md (`report`) / interactive browse (`tui`)
 ```
 
 ## Why SQLite first?
