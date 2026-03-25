@@ -188,14 +188,18 @@ Rebuilds the plan in-process (same `nexus.toml` `[planner]` fields and `--no-mer
 | Key | Action |
 | --- | --- |
 | `j` / `↓`, `k` / `↑` | Move selection |
-| `s` | Cycle sort: label, canonical↓, risk↓, ambiguous-first |
+| `g` / `G` | Jump to top / bottom |
+| `PgUp` / `PgDn` | Page up / down |
+| `s` | Cycle sort: label, canonical↓, health↓, risk↓, ambiguous-first |
 | `/` | Edit filter substring (label + `cluster_key`); Enter apply, Esc cancel |
 | `f` | Clear filter |
-| `e` | Full evidence list for selected cluster (Esc back) |
+| `Tab` | Toggle bottom panel: Detail ↔ Actions |
+| `a` | Switch to Actions panel |
+| `e` | Full evidence overlay for selected cluster (Esc back) |
 | `p` | Show `canonical_pins` TOML snippet for the canonical clone |
 | `o` | Write full plan JSON to `./nexus-plan-tui-export.json` |
 | `?` | Help overlay (Esc or `q` closes) |
-| `q` | Quit |
+| `q` / `Esc` / `Ctrl-c` | Quit |
 
 Requires a TTY; exits with an error if stdout is not interactive.
 
