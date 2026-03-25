@@ -2,7 +2,7 @@
 
 ## Why not a web dashboard?
 
-Nexus is intentionally **CLI-first** (with an optional **TUI** later for inspection, not a browser app). A dashboard pulls the product toward authentication, hosted state, deployment, and competition with large internal-developer-portal products. That conflicts with **local-first**, **deterministic**, and **fast** triage: the goal is to tell you which repos matter and which copy is canonical on *your machine*, without standing up a service.
+Nexus is intentionally **CLI-first** (with an optional **TUI** for inspection, not a browser app). A dashboard pulls the product toward authentication, hosted state, deployment, and competition with large internal-developer-portal products. That conflicts with **local-first**, **deterministic**, and **fast** triage: the goal is to tell you which repos matter and which copy is canonical on *your machine*, without standing up a service.
 
 See `docs/PRODUCT_STRATEGY.md` for positioning and non-goals.
 
@@ -12,4 +12,4 @@ See `docs/PRODUCT_STRATEGY.md` for positioning and non-goals.
 
 ## Does Nexus require AI?
 
-No. Scoring and planning are **deterministic**. Optional AI features (e.g. explanation or suggestions) may be added later and must consume structured Nexus output, not replace core scoring.
+No. Scoring and planning are **deterministic**. Optional AI features (`nexus explain --ai`, `nexus ai-summary`) consume structured Nexus output and are clearly labeled as model-generated. They require `ai.enabled = true` in config and an API key; they do not replace core scoring.

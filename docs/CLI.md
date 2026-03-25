@@ -1,8 +1,8 @@
 # CLI
 
-## Stable core (v1 direction)
+## Stable core
 
-These commands are the **intended stable surface** for repo fleet triage (names and primary flags should remain compatible in v1.x):
+These commands are the **stable surface** for repo fleet triage (names and primary flags remain compatible in v1.x):
 
 | Command | Purpose |
 | --- | --- |
@@ -15,15 +15,20 @@ These commands are the **intended stable surface** for repo fleet triage (names 
 | `export` | JSON envelope with `inventory` (optional `--with-plan`) for backup or transfer |
 | `import` | Replace DB inventory from export JSON (clears persisted plan); requires `--force` |
 | `explain` | One cluster’s scores, evidence, and actions (by cluster query or clone/remote id); optional `--ai` narrative |
-| `ai-summary` | AI-generated executive summary of the full plan (requires `ai.enabled = true`) |
-| `tui` | Interactive terminal table over the current plan (sort/filter, evidence, pin hint, export JSON); read-only |
 
-**Helpers / previews**
+**Secondary (shipped, real)**
 
 | Command | Purpose |
 | --- | --- |
-| `apply --dry-run` | Read-only preview: counts clusters and proposed actions (`--format json` supported). **Mutating apply is not implemented**; omitting `--dry-run` exits with an error. Stays as the v1 preview mechanism (not folded into `plan`/`report`). |
-| `serve` | **Experimental** read-only JSON over local SQLite for scripting. **Not** a dashboard, not multi-user, **unstable API** until release notes say otherwise. May move behind a feature flag later; default product remains the CLI. |
+| `tui` | Interactive terminal table over the current plan (sort/filter, evidence, pin hint, export JSON); read-only |
+
+**Experimental**
+
+| Command | Purpose |
+| --- | --- |
+| `ai-summary` | AI-generated executive summary of the full plan (requires `ai.enabled = true` + API key) |
+| `apply --dry-run` | Read-only preview: counts clusters and proposed actions (`--format json` supported). Mutating apply is not implemented. |
+| `serve` | Read-only JSON over local SQLite for scripting. Not a dashboard, not multi-user, unstable API until release notes say otherwise. |
 
 New subcommands may be added alongside the core without removing these in v1.x.
 

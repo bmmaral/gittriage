@@ -1,6 +1,6 @@
 # External tools
 
-Nexus can run **without** these programs; they extend what `scan`, `plan --external`, and `doctor` can see.
+Nexus can run **without** these programs; they extend what the engine can see. The `--external` flag is supported on: `score`, `plan`, `report`, `explain`, `export --with-plan`, `tui`, and `ai-summary`. The `doctor` command checks for their presence on `PATH`.
 
 ## `git`
 

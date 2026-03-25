@@ -16,14 +16,14 @@ Nexus uses a **small, explainable** scoring model (see `docs/PRODUCT_STRATEGY.md
 
 `PlanDocument` also carries **`scoring_rules_version`** (integer): the version of the deterministic rule set in `nexus-plan` (`crates/nexus-plan/src/scoring.rs`). It can change without bumping the CLI semver.
 
-Do **not** treat `oss_readiness` as "this project is OSS-ready" for every user; many users only want triage. Optional **Open Source Readiness** and other profiles will be documented separately when implemented.
+Do **not** treat `oss_readiness` as "this project is OSS-ready" for every user; many users only want triage. Optional profiles (Publish Readiness, Open Source Readiness, Security, AI Handoff) are documented in `docs/SCORING_PROFILES.md`.
 
 ## Cluster confidence model (v5)
 
 The planner computes a continuous **confidence** value (0.0–1.0) for each cluster, which determines `ClusterStatus`:
 
 - `confidence >= ambiguous_cluster_threshold` (default 0.60) → **Resolved**
-- otherwise → **Ambiguous** (or **ManualReview** if extremely low)
+- otherwise → **Ambiguous**
 
 Confidence factors (cumulative, clamped to [0, 1]):
 
@@ -119,7 +119,7 @@ A higher score means "signals that usually help handoff or publication" (license
 | `fork_signal` | −4 | Fork flag on remote metadata |
 | `remote_recent_push` | +6 | Push activity within 90 days |
 
-**Open Source Readiness** (stricter profile: CONTRIBUTING, SECURITY, CoC, etc.) is planned as an **optional** layer on top—see `docs/PRODUCT_STRATEGY.md`.
+**Open Source Readiness** (stricter profile: CONTRIBUTING, SECURITY, CoC, etc.) is available as an optional scoring profile—see `docs/SCORING_PROFILES.md`.
 
 ## Risk score — `scores.risk` (0–100)
 
@@ -147,9 +147,9 @@ Every important score movement should be tied to evidence items:
 
 ```json
 [
-  {"kind": "remote_url_match", "delta": 25, "detail": "matched github.com:demo/example"},
-  {"kind": "fresh_commit", "delta": 12, "detail": "newest commit in cluster"},
-  {"kind": "ci_present", "delta": 5, "detail": ".github/workflows/ci.yml exists"}
+  {"kind": "canonical_clone_pick", "delta": 14, "detail": "selected as canonical local candidate"},
+  {"kind": "recent_activity", "delta": 12, "detail": "last commit within 14 days"},
+  {"kind": "manifest_present", "delta": 14, "detail": "project manifest detected"}
 ]
 ```
 

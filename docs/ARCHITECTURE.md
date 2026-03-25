@@ -91,7 +91,7 @@ Because Nexus is a local-first CLI and needs:
 
 ## Why no web UI?
 
-The core risk is not presentation—it is **choosing the wrong canonical repo**. The product prioritizes correct inventory + clustering over a browser UI. A dashboard would also drag the project toward hosted state and platform scope; that is an explicit non-goal (`docs/PRODUCT_STRATEGY.md`). An optional **TUI** may come later for inspection; it is not a replacement for the CLI engine.
+The core risk is not presentation—it is **choosing the wrong canonical repo**. The product prioritizes correct inventory + clustering over a browser UI. A dashboard would also drag the project toward hosted state and platform scope; that is an explicit non-goal (`docs/PRODUCT_STRATEGY.md`). The **TUI** (`nexus tui`) provides interactive inspection; it is not a replacement for the CLI engine.
 
 ## Native build dependencies
 

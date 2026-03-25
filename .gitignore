@@ -1,48 +1,9 @@
-# ----------------------
-# Rust (Nexus v2 CLI)
-# ----------------------
+# Rust
 target/
 nexus-plan.json
+nexus-plan-tui-export.json
 
-# ----------------------
-# Node / TypeScript
-# ----------------------
-node_modules/
-dist/
-dist-*/
-build/
-*.tsbuildinfo
-*.map
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# ----------------------
-# Python
-# ----------------------
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.so
-*.egg-info/
-.eggs/
-.venv/
-venv/
-env/
-ENV/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-coverage/
-htmlcov/
-.coverage*
-.ipynb_checkpoints/
-
-# ----------------------
 # OS / Editors
-# ----------------------
 .DS_Store
 Thumbs.db
 *.swp
@@ -51,30 +12,18 @@ Thumbs.db
 .vscode/
 *.code-workspace
 
-# ----------------------
 # Environment & Secrets
-# ----------------------
 .env
 *.env
 .env.*
 
-# ----------------------
 # Nexus local state (never commit)
-# ----------------------
 .nexus/
 *.nexus.log
 reports/*.temp.*
 conversations/
 
-# ----------------------
-# Legacy / misc (if present locally)
-# ----------------------
-web/.cache/
-web/static/*.map
-
-# ----------------------
 # Logs & temp
-# ----------------------
 logs/
 *.log
 *.log.*
@@ -82,9 +31,7 @@ logs/
 tmp/
 temp/
 
-# ----------------------
 # Archives
-# ----------------------
 *.zip
 *.tar
 *.tar.gz

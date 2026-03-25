@@ -24,10 +24,21 @@ Health and publish-readiness signals come from scan-time heuristics (manifest, R
 The `scores.oss_readiness` field is documented as **publish readiness** in reports (`docs/SCORING.md`). It is **not** a guarantee that a repo is ready for public OSS maintainership.
 
 - Use `nexus plan --external` only when optional scanners are installed (`nexus tools`) and you accept the runtime cost.
-- Stricter **Open Source Readiness** profiles are planned as optional layers, not the default headline.
+- Optional **Open Source Readiness** and other scoring profiles are available via `planner.scoring_profile` in `nexus.toml` (see `docs/SCORING_PROFILES.md`).
+
+## Explaining a cluster
+
+`nexus explain` gives you a detailed deterministic breakdown of one cluster:
+
+```bash
+nexus explain cluster my-repo              # text
+nexus explain cluster my-repo --format json
+nexus explain cluster my-repo --ai         # add AI narrative (requires config)
+```
 
 ## AI-optional flow
 
 Core commands (`scan`, `score`, `plan`, `report`, `doctor`) are fully deterministic. No API keys are required.
 
-- Future `explain` / `suggest` commands may call user-configured OpenAI-compatible endpoints; they will consume structured Nexus output, not arbitrary repo trees by default (`docs/PRODUCT_STRATEGY.md`).
+- `nexus explain --ai` and `nexus ai-summary` call user-configured OpenAI-compatible endpoints; they consume structured Nexus output, not arbitrary repo trees (`docs/CLI.md`).
+- AI output is clearly labeled as model-generated.

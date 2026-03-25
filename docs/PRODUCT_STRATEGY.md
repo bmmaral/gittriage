@@ -136,10 +136,11 @@ Core commands for v1:
 - `nexus explain` — deterministic per-cluster view (text/JSON)
 - `nexus export` / `nexus import` — inventory JSON backup and full DB inventory replace (clears persisted plan)
 
-Planned commands after the core is stable:
+Shipped alongside core:
 
-- `nexus tui`
-- `nexus suggest` (AI-assisted, optional)
+- `nexus tui` — interactive terminal browser (secondary interface)
+- `nexus ai-summary` — AI-generated plan summary (experimental; requires config + API key)
+- `nexus suggest` — AI-assisted suggestions (planned, not yet shipped)
 
 ### Secondary interface: TUI
 
@@ -358,13 +359,16 @@ Therefore:
 - `doctor`: validate environment, adapters, and config
 - `tools`: inspect optional adapter availability
 
-### Planned next layer
+### Shipped alongside core
 
+- `export` / `import` (inventory JSON envelope; optional `--with-plan`)
+- deterministic `explain` (text/JSON; optional `--ai` narrative)
 - `tui`: interactive inspection and overrides
-- `suggest`: AI-assisted suggestions grounded in existing evidence
-- optional AI-enhanced explanation layered on **`explain`** (deterministic CLI shipped)
+- `ai-summary`: AI-generated plan summary (experimental)
 
-**Shipped alongside core:** `export` / `import` (inventory JSON envelope; optional `--with-plan`); deterministic `explain`.
+### Planned
+
+- `suggest`: AI-assisted suggestions grounded in existing evidence
 
 ### Not a priority
 
@@ -408,16 +412,16 @@ Success criteria:
 - clear next-step plan
 - machine-readable JSON output
 
-### Phase 2 — TUI
+### Phase 2 — TUI (shipped)
 
 Goal: make inspection pleasant without changing product type.
 
-Ship:
+Shipped:
 
 - cluster browser
 - score sorting/filtering
 - canonical evidence panel
-- manual override/pinning
+- manual override/pinning (TOML snippet)
 - plan preview/export
 
 ### Phase 3 — adapter ecosystem
@@ -431,16 +435,20 @@ Ship official best-effort adapters for:
 - secret scanning
 - SBOM/dependency inspection
 
-### Phase 4 — optional AI
+### Phase 4 — optional AI (partially shipped)
 
 Goal: improve explanation and suggestions.
 
-Ship:
+Shipped:
 
-- optional AI on top of deterministic `explain` (CLI `explain` shipped)
-- `suggest`
-- OpenAI-compatible endpoint config
+- optional AI on top of deterministic `explain` (`--ai` flag)
+- `ai-summary` for plan-wide narrative
+- OpenAI-compatible endpoint config (`[ai]` in `nexus.toml`)
 - strict grounding in deterministic Nexus output
+
+Remaining:
+
+- `suggest` command
 
 ### Phase 5 — distribution breadth
 
