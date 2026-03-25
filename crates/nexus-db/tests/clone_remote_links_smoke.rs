@@ -7,7 +7,7 @@ use tempfile::tempdir;
 fn replace_clone_remote_links_replaces_existing_rows() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("state.db");
-    let db = Database::open(&db_path).expect("open db");
+    let mut db = Database::open(&db_path).expect("open db");
 
     let run = RunRecord {
         id: "run-1".into(),

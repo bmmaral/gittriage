@@ -77,7 +77,7 @@ fn replace_inventory_clears_persisted_plan() {
 
     let plan = PlanDocument {
         schema_version: 1,
-        scoring_rules_version: 4,
+        scoring_rules_version: 5,
         generated_at: Utc::now(),
         generated_by: "test".into(),
         clusters: vec![ClusterPlan {

@@ -7,7 +7,7 @@ use tempfile::tempdir;
 fn load_inventory_includes_latest_run() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("runs.db");
-    let db = Database::open(&db_path).expect("open");
+    let mut db = Database::open(&db_path).expect("open");
 
     let run = RunRecord {
         id: "run-1".into(),

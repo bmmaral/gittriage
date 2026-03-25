@@ -138,15 +138,14 @@ fn merge_base_evidence_is_attached_best_effort() {
         mb_evidence[0].score_delta
     );
 
-    let plan_no =
-        build_plan_with(
-            &snapshot,
-            PlanBuildOpts {
-                merge_base: false,
-                ..Default::default()
-            },
-        )
-        .expect("build plan");
+    let plan_no = build_plan_with(
+        &snapshot,
+        PlanBuildOpts {
+            merge_base: false,
+            ..Default::default()
+        },
+    )
+    .expect("build plan");
     let has_mb = plan_no.clusters[0]
         .cluster
         .evidence

@@ -83,8 +83,7 @@ pub fn build_plan_with(snapshot: &InventorySnapshot, opts: PlanBuildOpts) -> Res
 }
 
 pub fn resolve_clusters(snapshot: &InventorySnapshot, opts: &PlanBuildOpts) -> Vec<ClusterPlan> {
-    let ambiguous_threshold =
-        (opts.ambiguous_cluster_threshold_pct.clamp(1, 99) as f64) / 100.0;
+    let ambiguous_threshold = (opts.ambiguous_cluster_threshold_pct.clamp(1, 99) as f64) / 100.0;
     let remote_by_id: HashMap<String, &RemoteRecord> =
         snapshot.remotes.iter().map(|r| (r.id.clone(), r)).collect();
 
@@ -311,6 +310,13 @@ fn attach_cross_cluster_duplicate_hints(plans: &mut [ClusterPlan], snapshot: &In
         })
         .collect();
 
+    // Index plan positions by cluster id for O(1) lookup instead of O(n) find
+    let plan_idx: HashMap<String, usize> = plans
+        .iter()
+        .enumerate()
+        .map(|(i, cp)| (cp.cluster.id.clone(), i))
+        .collect();
+
     let mut fp_to_clusters: HashMap<String, BTreeSet<String>> = HashMap::new();
     for c in &snapshot.clones {
         let Some(fp) = c
@@ -340,11 +346,15 @@ fn attach_cross_cluster_duplicate_hints(plans: &mut [ClusterPlan], snapshot: &In
             ids.join("`, `")
         );
         for cid in &ids {
-            if let Some(cp) = plans.iter_mut().find(|p| p.cluster.id == *cid) {
-                let (sid, sk) = evidence_subject_cluster(&cp.cluster);
-                cp.cluster
-                    .evidence
-                    .push(ev(&sid, sk, "fingerprint_split_clusters", 0.0, &detail));
+            if let Some(&idx) = plan_idx.get(cid) {
+                let (sid, sk) = evidence_subject_cluster(&plans[idx].cluster);
+                plans[idx].cluster.evidence.push(ev(
+                    &sid,
+                    sk,
+                    "fingerprint_split_clusters",
+                    0.0,
+                    &detail,
+                ));
             }
         }
     }
@@ -396,9 +406,9 @@ fn attach_cross_cluster_duplicate_hints(plans: &mut [ClusterPlan], snapshot: &In
         };
 
         for cid in &cluster_ids {
-            if let Some(cp) = plans.iter_mut().find(|p| p.cluster.id == *cid) {
-                let (sid, sk) = evidence_subject_cluster(&cp.cluster);
-                cp.cluster.evidence.push(ev(
+            if let Some(&idx) = plan_idx.get(cid) {
+                let (sid, sk) = evidence_subject_cluster(&plans[idx].cluster);
+                plans[idx].cluster.evidence.push(ev(
                     &sid,
                     sk,
                     "duplicate_name_split_clusters",
@@ -641,10 +651,14 @@ fn build_actions(
     remotes: &[RemoteRecord],
     opts: &PlanBuildOpts,
 ) -> Vec<PlanAction> {
-    let mut actions = Vec::new();
-    let oss_line = effective_oss_threshold(opts.oss_candidate_threshold, opts.user_intent.scoring_profile);
+    let mut actions = Vec::with_capacity(8);
+    let oss_line = effective_oss_threshold(
+        opts.oss_candidate_threshold,
+        opts.user_intent.scoring_profile,
+    );
     let archive_min = opts.archive_duplicate_canonical_min.min(100) as f64;
 
+    // --- Ambiguous cluster review ---
     if matches!(cluster.status, ClusterStatus::Ambiguous) {
         actions.push(plan_action(
             Priority::High,
@@ -670,6 +684,28 @@ fn build_actions(
         ));
     }
 
+    // --- Mark canonical (resolved, high confidence) ---
+    if matches!(cluster.status, ClusterStatus::Resolved)
+        && cluster.scores.canonical >= 60.0
+        && cluster.canonical_clone_id.is_some()
+    {
+        actions.push(plan_action(
+            Priority::Low,
+            ActionType::MarkCanonical,
+            MemberKind::Clone,
+            cluster.canonical_clone_id.clone().unwrap(),
+            "Resolved cluster with strong canonical signal; confirm this is the primary copy",
+            ActionExtras {
+                evidence_summary: Some(
+                    "canonical score ≥ 60; planner picked by freshness + git metadata",
+                ),
+                confidence: Some((cluster.scores.canonical / 100.0).min(0.95)),
+                risk_note: None,
+            },
+        ));
+    }
+
+    // --- Archive duplicates ---
     if clones.len() > 1 && cluster.scores.canonical >= archive_min {
         for clone in clones {
             if Some(&clone.id) != cluster.canonical_clone_id.as_ref() {
@@ -691,21 +727,80 @@ fn build_actions(
         }
     }
 
+    // --- Merge diverged clones (merge-base detected shared history but different HEADs) ---
+    if clones.len() > 1 {
+        let has_merge_base = cluster
+            .evidence
+            .iter()
+            .any(|e| e.kind == "merge_base" && e.score_delta > 0.0);
+        if has_merge_base {
+            let canon_head = clones
+                .iter()
+                .find(|c| Some(&c.id) == cluster.canonical_clone_id.as_ref())
+                .and_then(|c| c.head_oid.clone());
+            for clone in clones {
+                if Some(&clone.id) != cluster.canonical_clone_id.as_ref()
+                    && clone.head_oid != canon_head
+                {
+                    actions.push(plan_action(
+                        Priority::Medium,
+                        ActionType::MergeDivergedClone,
+                        MemberKind::Clone,
+                        clone.id.clone(),
+                        "Clone shares git history with canonical but has diverged; consider merging",
+                        ActionExtras {
+                            evidence_summary: Some(
+                                "merge-base evidence confirms shared ancestor; HEADs differ",
+                            ),
+                            confidence: Some(0.55),
+                            risk_note: Some(
+                                "merge conflicts possible; review diff before merging",
+                            ),
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    // --- Publish readiness actions ---
     let publish_score = cluster.scores.oss_readiness;
-    if publish_score < oss_line {
-        if let Some(clone_id) = cluster.canonical_clone_id.clone() {
+    if let Some(clone_id) = cluster.canonical_clone_id.clone() {
+        let canon = clones.iter().find(|c| c.id == clone_id);
+
+        // AddMissingDocs: when README is absent
+        if canon.map(|c| c.readme_title.is_none()).unwrap_or(false) {
+            actions.push(plan_action(
+                Priority::Medium,
+                ActionType::AddMissingDocs,
+                MemberKind::Clone,
+                clone_id.clone(),
+                "No README detected; add documentation for onboarding and discoverability",
+                ActionExtras {
+                    evidence_summary: Some("see `no_readme` evidence"),
+                    confidence: Some(0.8),
+                    risk_note: None,
+                },
+            ));
+        }
+
+        // AddLicense: when license is absent
+        if canon.map(|c| c.license_spdx.is_none()).unwrap_or(false) {
             actions.push(plan_action(
                 Priority::Medium,
                 ActionType::AddLicense,
                 MemberKind::Clone,
                 clone_id.clone(),
-                "Publish readiness below threshold: ensure license metadata exists",
+                "No license file detected; add license for legal clarity",
                 ActionExtras {
-                    evidence_summary: Some("license SPDX / file signals in scan"),
-                    confidence: Some(0.55),
+                    evidence_summary: Some("see `no_license` evidence"),
+                    confidence: Some(0.7),
                     risk_note: Some("handoff and publication often require explicit licensing"),
                 },
             ));
+        }
+
+        if publish_score < oss_line {
             actions.push(plan_action(
                 Priority::Medium,
                 ActionType::AddCi,
@@ -722,7 +817,7 @@ fn build_actions(
                 Priority::Medium,
                 ActionType::RunSecurityScans,
                 MemberKind::Clone,
-                clone_id,
+                clone_id.clone(),
                 "Publish readiness below threshold: run semgrep/gitleaks/syft",
                 ActionExtras {
                     evidence_summary: Some("optional adapters when installed (`nexus tools`)"),
@@ -730,9 +825,45 @@ fn build_actions(
                     risk_note: Some("scanners can be noisy; triage findings before acting"),
                 },
             ));
+            actions.push(plan_action(
+                Priority::Low,
+                ActionType::GenerateSbom,
+                MemberKind::Clone,
+                clone_id.clone(),
+                "Generate software bill of materials for supply-chain visibility",
+                ActionExtras {
+                    evidence_summary: Some("publish readiness below threshold"),
+                    confidence: Some(0.45),
+                    risk_note: Some(
+                        "requires syft or similar tool on PATH (`nexus tools` to check)",
+                    ),
+                },
+            ));
+        }
+
+        // PublishOssCandidate: when publish score is high enough
+        if publish_score >= oss_line && !remotes.is_empty() {
+            let has_github = remotes.iter().any(|r| r.provider == "github");
+            if has_github {
+                actions.push(plan_action(
+                    Priority::Low,
+                    ActionType::PublishOssCandidate,
+                    MemberKind::Clone,
+                    clone_id.clone(),
+                    "Publish readiness meets threshold; candidate for open-source release",
+                    ActionExtras {
+                        evidence_summary: Some("license, README, manifest, and remote all present"),
+                        confidence: Some((publish_score / 100.0).min(0.9)),
+                        risk_note: Some(
+                            "review IP, secrets, and internal references before publishing",
+                        ),
+                    },
+                ));
+            }
         }
     }
 
+    // --- No remote: suggest creating one ---
     if remotes.is_empty() && !clones.is_empty() {
         if let Some(clone_id) = cluster.canonical_clone_id.clone() {
             actions.push(plan_action(
@@ -742,7 +873,9 @@ fn build_actions(
                 clone_id,
                 "Canonical local project has no linked remote",
                 ActionExtras {
-                    evidence_summary: Some("see `no_remote_linked` / `local_only_cluster` evidence"),
+                    evidence_summary: Some(
+                        "see `no_remote_linked` / `local_only_cluster` evidence",
+                    ),
                     confidence: Some(0.45),
                     risk_note: Some(
                         "may be intentional offline work; verify before creating or linking remotes",
@@ -752,6 +885,7 @@ fn build_actions(
         }
     }
 
+    // --- Remote-only: suggest cloning locally ---
     if clones.is_empty() && !remotes.is_empty() {
         if let Some(remote_id) = cluster.canonical_remote_id.clone() {
             actions.push(plan_action(
@@ -761,7 +895,9 @@ fn build_actions(
                 remote_id,
                 "Remote-only cluster: add a local clone when you need filesystem scan or merge-base evidence",
                 ActionExtras {
-                    evidence_summary: Some("see `remote_only_cluster` evidence; no Clone members in cluster"),
+                    evidence_summary: Some(
+                        "see `remote_only_cluster` evidence; no Clone members in cluster",
+                    ),
                     confidence: Some(0.55),
                     risk_note: Some(
                         "GitHub-only triage is still useful; cloning is optional unless you need local tooling",
@@ -1131,13 +1267,11 @@ mod tests {
             plans[0].cluster.canonical_clone_id.as_deref(),
             Some("clone-new")
         );
-        assert!(
-            plans[0]
-                .cluster
-                .evidence
-                .iter()
-                .any(|e| e.kind == "user_pinned_canonical")
-        );
+        assert!(plans[0]
+            .cluster
+            .evidence
+            .iter()
+            .any(|e| e.kind == "user_pinned_canonical"));
     }
 
     #[test]
@@ -1160,13 +1294,11 @@ mod tests {
             ..Default::default()
         };
         let plans = resolve_clusters(&snapshot, &opts);
-        assert!(
-            plans[0]
-                .cluster
-                .evidence
-                .iter()
-                .any(|e| e.kind == "user_ignored_cluster")
-        );
+        assert!(plans[0]
+            .cluster
+            .evidence
+            .iter()
+            .any(|e| e.kind == "user_ignored_cluster"));
         assert!(plans[0].actions.is_empty());
     }
 }

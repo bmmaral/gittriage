@@ -10,7 +10,7 @@ fn persist_plan_empty_succeeds() {
     let mut db = Database::open(&db_path).expect("open");
     let plan = PlanDocument {
         schema_version: 1,
-        scoring_rules_version: 4,
+        scoring_rules_version: 5,
         generated_at: Utc::now(),
         generated_by: "test".into(),
         clusters: vec![],

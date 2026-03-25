@@ -88,10 +88,14 @@ impl Database {
         Ok(())
     }
 
-    pub fn save_clones(&self, run_id: &str, clones: &[CloneRecord]) -> Result<()> {
+    pub fn save_clones(&mut self, run_id: &str, clones: &[CloneRecord]) -> Result<()> {
         let now = Utc::now().to_rfc3339();
+        let tx = self
+            .conn
+            .transaction()
+            .context("begin save_clones transaction")?;
         for clone in clones {
-            self.conn.execute(
+            tx.execute(
                 r#"
                 INSERT OR REPLACE INTO clones
                 (id, repo_id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
@@ -119,15 +123,19 @@ impl Database {
                 ],
             )?;
         }
+        tx.commit().context("commit save_clones")?;
         Ok(())
     }
 
-    pub fn replace_clone_remote_links(&self, links: &[CloneRemoteLink]) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM clone_remote_links", [])
+    pub fn replace_clone_remote_links(&mut self, links: &[CloneRemoteLink]) -> Result<()> {
+        let tx = self
+            .conn
+            .transaction()
+            .context("begin replace_clone_remote_links transaction")?;
+        tx.execute("DELETE FROM clone_remote_links", [])
             .context("failed to clear clone_remote_links")?;
         for link in links {
-            self.conn.execute(
+            tx.execute(
                 r#"
                 INSERT INTO clone_remote_links (clone_id, remote_id, relationship)
                 VALUES (?1, ?2, ?3)
@@ -135,13 +143,18 @@ impl Database {
                 params![link.clone_id, link.remote_id, link.relationship],
             )?;
         }
+        tx.commit().context("commit replace_clone_remote_links")?;
         Ok(())
     }
 
-    pub fn save_remotes(&self, remotes: &[RemoteRecord]) -> Result<()> {
+    pub fn save_remotes(&mut self, remotes: &[RemoteRecord]) -> Result<()> {
         let now = Utc::now().to_rfc3339();
+        let tx = self
+            .conn
+            .transaction()
+            .context("begin save_remotes transaction")?;
         for remote in remotes {
-            self.conn.execute(
+            tx.execute(
                 r#"
                 INSERT OR REPLACE INTO remotes
                 (id, repo_id, provider, owner, name, full_name, url, normalized_url, default_branch,
@@ -165,6 +178,7 @@ impl Database {
                 ],
             )?;
         }
+        tx.commit().context("commit save_remotes")?;
         Ok(())
     }
 

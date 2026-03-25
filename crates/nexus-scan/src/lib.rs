@@ -2,9 +2,9 @@ use anyhow::Result;
 use blake3::Hasher;
 use ignore::WalkBuilder;
 use nexus_core::{CloneRecord, ManifestKind};
-use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -80,8 +80,10 @@ fn build_clone_record(path: &Path, options: &ScanOptions) -> Result<CloneRecord>
     let manifest_kind = detect_manifest(path);
     let readme_title = extract_readme_title(path, options.max_readme_bytes)?;
     let license_spdx = detect_license(path);
-    let fingerprint = Some(compute_fingerprint(path, options.max_hash_files)?);
-    let size_bytes = dir_size(path).ok();
+    let FingerprintResult {
+        fingerprint,
+        size_bytes,
+    } = compute_fingerprint_and_size(path, options.max_hash_files);
 
     Ok(CloneRecord {
         id: format!("clone-{}", Uuid::new_v4()),
@@ -93,11 +95,11 @@ fn build_clone_record(path: &Path, options: &ScanOptions) -> Result<CloneRecord>
         default_branch: None,
         is_dirty: false,
         last_commit_at: None,
-        size_bytes,
+        size_bytes: Some(size_bytes),
         manifest_kind,
         readme_title,
         license_spdx,
-        fingerprint,
+        fingerprint: Some(fingerprint),
     })
 }
 
@@ -123,9 +125,14 @@ fn detect_manifest(path: &Path) -> Option<ManifestKind> {
     None
 }
 
+fn heading_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?m)^\s*#\s+(.+?)\s*$").unwrap())
+}
+
 fn extract_readme_title(path: &Path, max_bytes: usize) -> Result<Option<String>> {
     let candidates = ["README.md", "README", "readme.md"];
-    let heading_re = Regex::new(r"(?m)^\s*#\s+(.+?)\s*$")?;
+    let re = heading_regex();
 
     for file in candidates {
         let readme = path.join(file);
@@ -133,12 +140,12 @@ fn extract_readme_title(path: &Path, max_bytes: usize) -> Result<Option<String>>
             continue;
         }
 
-        let mut content = fs::read_to_string(readme)?;
+        let mut content = fs::read_to_string(&readme)?;
         if content.len() > max_bytes {
             content.truncate(max_bytes);
         }
 
-        if let Some(caps) = heading_re.captures(&content) {
+        if let Some(caps) = re.captures(&content) {
             return Ok(Some(caps[1].trim().to_string()));
         }
         return Ok(Some(file.to_string()));
@@ -154,8 +161,16 @@ fn detect_license(path: &Path) -> Option<String> {
     None
 }
 
-fn compute_fingerprint(path: &Path, max_files: usize) -> Result<String> {
-    let mut files = Vec::new();
+struct FingerprintResult {
+    fingerprint: String,
+    size_bytes: u64,
+}
+
+/// Single walk: collect fingerprint and total size simultaneously.
+fn compute_fingerprint_and_size(path: &Path, max_files: usize) -> FingerprintResult {
+    let mut files = Vec::with_capacity(max_files);
+    let mut total_size: u64 = 0;
+
     for entry in walkdir::WalkDir::new(path) {
         let entry = match entry {
             Ok(v) => v,
@@ -163,15 +178,17 @@ fn compute_fingerprint(path: &Path, max_files: usize) -> Result<String> {
         };
 
         if entry.file_type().is_file() {
-            let rel = entry
-                .path()
-                .strip_prefix(path)
-                .unwrap_or(entry.path())
-                .display()
-                .to_string();
-            files.push(rel);
-            if files.len() >= max_files {
-                break;
+            if let Ok(meta) = entry.metadata() {
+                total_size += meta.len();
+            }
+            if files.len() < max_files {
+                let rel = entry
+                    .path()
+                    .strip_prefix(path)
+                    .unwrap_or(entry.path())
+                    .display()
+                    .to_string();
+                files.push(rel);
             }
         }
     }
@@ -181,19 +198,9 @@ fn compute_fingerprint(path: &Path, max_files: usize) -> Result<String> {
     for f in files {
         hasher.update(f.as_bytes());
     }
-    Ok(hasher.finalize().to_hex().to_string())
-}
 
-fn dir_size(path: &Path) -> Result<u64> {
-    let mut total = 0_u64;
-    for entry in walkdir::WalkDir::new(path) {
-        let entry = match entry {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if entry.file_type().is_file() {
-            total += entry.metadata()?.len();
-        }
+    FingerprintResult {
+        fingerprint: hasher.finalize().to_hex().to_string(),
+        size_bytes: total_size,
     }
-    Ok(total)
 }

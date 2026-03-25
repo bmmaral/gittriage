@@ -215,7 +215,7 @@ fn main() -> Result<()> {
         Commands::Scan {
             roots,
             github_owner,
-        } => cmd_scan(&db, &bundle, roots, github_owner),
+        } => cmd_scan(&mut db, &bundle, roots, github_owner),
         Commands::Score {
             format,
             no_merge_base,
@@ -259,11 +259,12 @@ fn main() -> Result<()> {
 }
 
 fn cmd_scan(
-    db: &Database,
+    db: &mut Database,
     bundle: &ConfigBundle,
     roots: Vec<PathBuf>,
     github_owner: Option<String>,
 ) -> Result<()> {
+    let t0 = std::time::Instant::now();
     let config = &bundle.config;
     let resolved_roots = if roots.is_empty() {
         config
@@ -275,6 +276,7 @@ fn cmd_scan(
         roots
     };
 
+    let t_scan = std::time::Instant::now();
     let mut clones = nexus_scan::scan_roots(
         &resolved_roots,
         &nexus_scan::ScanOptions {
@@ -284,7 +286,9 @@ fn cmd_scan(
             max_hash_files: config.scan.max_hash_files,
         },
     )?;
+    let scan_ms = t_scan.elapsed().as_millis();
 
+    let t_enrich = std::time::Instant::now();
     let mut remotes = Vec::new();
     let mut links = Vec::new();
 
@@ -317,12 +321,16 @@ fn cmd_scan(
             }
         }
     }
+    let enrich_ms = t_enrich.elapsed().as_millis();
 
     let gh_owner = github_owner.clone().or_else(|| config.github_owner.clone());
+    let t_gh = std::time::Instant::now();
     let github_remotes: Vec<nexus_core::RemoteRecord> = match &gh_owner {
         Some(owner) => nexus_github::ingest_owner(owner).unwrap_or_default(),
         None => vec![],
     };
+    let gh_ms = t_gh.elapsed().as_millis();
+    let n_github = github_remotes.len();
 
     let github_by_url: std::collections::HashMap<String, String> = github_remotes
         .iter()
@@ -360,20 +368,46 @@ fn cmd_scan(
             .iter()
             .map(|p| p.display().to_string())
             .collect(),
-        github_owner: gh_owner,
+        github_owner: gh_owner.clone(),
         version: env!("CARGO_PKG_VERSION").into(),
     };
 
+    let t_db = std::time::Instant::now();
     db.save_run(&run)?;
     db.save_clones(&run.id, &clones)?;
     db.save_remotes(&remotes)?;
     db.replace_clone_remote_links(&links)?;
+    let db_ms = t_db.elapsed().as_millis();
 
-    println!("scan complete");
-    println!("clones: {}", clones.len());
-    println!("remotes: {}", remotes.len());
-    println!("clone↔remote links: {}", links.len());
-    println!("db: {}", bundle.effective_db_path.display());
+    let n_git = clones.iter().filter(|c| c.is_git).count();
+    let total_size: u64 = clones.iter().filter_map(|c| c.size_bytes).sum();
+
+    println!("scan complete ({:.1}s)", t0.elapsed().as_secs_f64());
+    println!();
+    println!(
+        "  clones         {:>5}  ({} git repos)",
+        clones.len(),
+        n_git
+    );
+    println!(
+        "  remotes        {:>5}  ({} local-git, {} github)",
+        remotes.len(),
+        remotes.iter().filter(|r| r.provider == "local-git").count(),
+        n_github,
+    );
+    println!("  links          {:>5}", links.len());
+    if total_size > 0 {
+        println!("  total size     {:>5}", format_bytes(total_size));
+    }
+    println!();
+    println!("  scan     {:>6}ms", scan_ms);
+    println!("  enrich   {:>6}ms", enrich_ms);
+    if gh_owner.is_some() {
+        println!("  github   {:>6}ms", gh_ms);
+    }
+    println!("  persist  {:>6}ms", db_ms);
+    println!();
+    println!("  db: {}", bundle.effective_db_path.display());
     Ok(())
 }
 
@@ -471,6 +505,7 @@ fn cmd_score(
     no_merge_base: bool,
     external: bool,
 ) -> Result<()> {
+    let t0 = std::time::Instant::now();
     let snapshot = db.load_inventory()?;
     let opts = plan_build_opts(bundle, !no_merge_base);
     let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
@@ -479,22 +514,50 @@ fn cmd_score(
     }
     match format {
         ScoreFormat::Text => {
+            use nexus_core::ClusterStatus;
+            let n_amb = plan
+                .clusters
+                .iter()
+                .filter(|cp| matches!(cp.cluster.status, ClusterStatus::Ambiguous))
+                .count();
+            let n_actions: usize = plan.clusters.iter().map(|cp| cp.actions.len()).sum();
+            println!(
+                "nexus score  {} clusters, {} actions, {} ambiguous  (rules v{}, {:.1}s)",
+                plan.clusters.len(),
+                n_actions,
+                n_amb,
+                plan.scoring_rules_version,
+                t0.elapsed().as_secs_f64(),
+            );
+            println!();
+            println!(
+                "{:<26} {:>5} {:>6} {:>5} {:>5} {:>5}  {:>4} {:>4}  STATUS",
+                "LABEL", "CANON", "HEALTH", "RECV", "PUB", "RISK", "EV", "ACT"
+            );
+            println!("{}", "─".repeat(88));
             for cp in &plan.clusters {
                 let c = &cp.cluster;
-                println!("{} — {} ({})", c.label, c.cluster_key, c.id);
+                let st = match c.status {
+                    ClusterStatus::Resolved => "OK",
+                    ClusterStatus::Ambiguous => "AMB",
+                    ClusterStatus::ManualReview => "REV",
+                };
+                let label = if c.label.len() > 25 {
+                    format!("{}…", &c.label[..24])
+                } else {
+                    c.label.clone()
+                };
                 println!(
-                    "  canonical {:.1}  health {:.1}  recoverability {:.1}  publish {:.1}  risk {:.1}",
+                    "{:<26} {:>5.0} {:>6.0} {:>5.0} {:>5.0} {:>5.0}  {:>4} {:>4}  {}",
+                    label,
                     c.scores.canonical,
                     c.scores.usability,
                     c.scores.recoverability,
                     c.scores.oss_readiness,
-                    c.scores.risk
-                );
-                println!(
-                    "  evidence: {} items, confidence {:.2}, status {:?}",
+                    c.scores.risk,
                     c.evidence.len(),
-                    c.confidence,
-                    c.status
+                    cp.actions.len(),
+                    st,
                 );
             }
             if plan.clusters.is_empty() {
@@ -528,6 +591,7 @@ fn cmd_plan(
     no_merge_base: bool,
     external: bool,
 ) -> Result<()> {
+    let t0 = std::time::Instant::now();
     let snapshot = db.load_inventory()?;
     let opts = plan_build_opts(bundle, !no_merge_base);
     let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
@@ -537,8 +601,31 @@ fn cmd_plan(
     db.persist_plan(&plan)?;
     let json = serde_json::to_string_pretty(&plan)?;
     fs::write(write, json).with_context(|| format!("failed to write plan {}", write.display()))?;
-    println!("wrote {}", write.display());
-    println!("persisted clusters/actions to sqlite");
+
+    let n_clusters = plan.clusters.len();
+    let n_actions: usize = plan.clusters.iter().map(|cp| cp.actions.len()).sum();
+    let n_high = plan
+        .clusters
+        .iter()
+        .flat_map(|cp| &cp.actions)
+        .filter(|a| matches!(a.priority, nexus_core::Priority::High))
+        .count();
+    let n_evidence: usize = plan
+        .clusters
+        .iter()
+        .map(|cp| cp.cluster.evidence.len())
+        .sum();
+
+    println!("plan written ({:.1}s)", t0.elapsed().as_secs_f64());
+    println!();
+    println!(
+        "  clusters  {:>5}   evidence  {:>5}",
+        n_clusters, n_evidence
+    );
+    println!("  actions   {:>5}   high-pri  {:>5}", n_actions, n_high);
+    println!();
+    println!("  json: {}", write.display());
+    println!("  db:   {}", bundle.effective_db_path.display());
     Ok(())
 }
 
@@ -792,6 +879,21 @@ fn cmd_doctor(bundle: &ConfigBundle, format: DoctorFormat) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn expand_tilde(input: &str) -> PathBuf {

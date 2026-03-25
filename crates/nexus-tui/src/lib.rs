@@ -1210,7 +1210,7 @@ mod tests {
     fn dummy_plan(clusters: Vec<ClusterPlan>) -> PlanDocument {
         PlanDocument {
             schema_version: 1,
-            scoring_rules_version: 4,
+            scoring_rules_version: 5,
             generated_at: chrono::Utc::now(),
             generated_by: "test".into(),
             clusters,

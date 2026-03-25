@@ -7,7 +7,7 @@ use nexus_core::{CloneRecord, ClusterStatus, EvidenceItem, MemberKind, RemoteRec
 use uuid::Uuid;
 
 /// Bump when rule weights or evidence kinds change materially (keep in sync with docs).
-pub const SCORING_RULES_VERSION: u32 = 4;
+pub const SCORING_RULES_VERSION: u32 = 5;
 
 /// Extra canonical confidence when `git merge-base` finds a common ancestor between two clones.
 pub const MERGE_BASE_CANONICAL_BONUS: f64 = 8.0;
@@ -26,7 +26,7 @@ pub fn evaluate_cluster(
     remotes: &[RemoteRecord],
     ambiguous_confidence_threshold: f64,
 ) -> ClusterEvaluation {
-    let mut evidence = Vec::new();
+    let mut evidence = Vec::with_capacity(clones.len() * 8 + remotes.len() * 4);
     let mut scores = ScoreBundle::default();
 
     let canonical_clone = clones
@@ -122,7 +122,27 @@ pub fn evaluate_cluster(
                     "stale_but_tracked",
                     "last commit within 12 months",
                 );
+            } else {
+                bump_risk(
+                    &mut scores,
+                    6.0,
+                    &mut evidence,
+                    &clone.id,
+                    MemberKind::Clone,
+                    "very_stale_canonical",
+                    "canonical clone has no commits in over a year",
+                );
             }
+        } else {
+            bump_risk(
+                &mut scores,
+                4.0,
+                &mut evidence,
+                &clone.id,
+                MemberKind::Clone,
+                "no_commit_timestamp",
+                "no last commit timestamp on canonical clone",
+            );
         }
 
         if clone.is_dirty {
@@ -147,6 +167,15 @@ pub fn evaluate_cluster(
                 "manifest_present",
                 "project manifest detected",
             );
+        } else {
+            bump_usability(
+                &mut scores,
+                -6.0,
+                &mut evidence,
+                &clone.id,
+                "no_manifest",
+                "no recognizable project manifest (Cargo.toml, package.json, etc.)",
+            );
         }
         if clone.readme_title.is_some() {
             bump_usability(
@@ -157,6 +186,15 @@ pub fn evaluate_cluster(
                 "readme_present",
                 "README / title detected",
             );
+        } else {
+            bump_usability(
+                &mut scores,
+                -8.0,
+                &mut evidence,
+                &clone.id,
+                "no_readme",
+                "no README detected; onboarding and documentation gap",
+            );
         }
         if clone.license_spdx.is_some() {
             bump_usability(
@@ -166,6 +204,15 @@ pub fn evaluate_cluster(
                 &clone.id,
                 "license_signal_usability",
                 "license metadata supports onboarding",
+            );
+        } else {
+            bump_usability(
+                &mut scores,
+                -4.0,
+                &mut evidence,
+                &clone.id,
+                "no_license",
+                "no license file detected; legal ambiguity for reuse or publish",
             );
         }
         if clone.fingerprint.is_some() {
@@ -266,6 +313,28 @@ pub fn evaluate_cluster(
                 "SPDX / license file signal",
             );
         }
+        if clone.readme_title.is_some() {
+            bump_publish(
+                &mut scores,
+                8.0,
+                &mut evidence,
+                &clone.id,
+                MemberKind::Clone,
+                "readme_publish_signal",
+                "README present supports publish readiness",
+            );
+        }
+        if clone.manifest_kind.is_some() {
+            bump_publish(
+                &mut scores,
+                6.0,
+                &mut evidence,
+                &clone.id,
+                MemberKind::Clone,
+                "manifest_publish_signal",
+                "project manifest supports packaging and publish",
+            );
+        }
     }
 
     if let Some(remote) = canonical_remote {
@@ -310,6 +379,15 @@ pub fn evaluate_cluster(
                 "remote_archived",
                 "archived upstream reduces publish readiness",
             );
+            bump_risk(
+                &mut scores,
+                8.0,
+                &mut evidence,
+                &remote.id,
+                MemberKind::Remote,
+                "archived_remote_risk",
+                "upstream is archived; updates may be impossible without un-archiving",
+            );
         }
         if !remote.is_fork {
             bump_publish(
@@ -344,21 +422,71 @@ pub fn evaluate_cluster(
                     "remote_recent_push",
                     "push activity within 90 days",
                 );
+            } else if age > Duration::days(365) {
+                bump_risk(
+                    &mut scores,
+                    4.0,
+                    &mut evidence,
+                    &remote.id,
+                    MemberKind::Remote,
+                    "remote_stale_push",
+                    "no push activity in over a year on canonical remote",
+                );
             }
         }
     }
 
-    if clones.len() > 1 {
+    // Risk: clone count gradations
+    let clone_count = clones.len();
+    if clone_count > 1 {
         let sid = clones.first().map(|c| c.id.as_str()).unwrap_or("cluster");
+        let (delta, detail) = if clone_count >= 5 {
+            (
+                36.0,
+                format!(
+                    "{clone_count} local clones in cluster; high duplication risk, consolidation strongly recommended"
+                ),
+            )
+        } else if clone_count >= 3 {
+            (
+                30.0,
+                format!(
+                    "{clone_count} local clones in cluster; moderate duplication, review for consolidation"
+                ),
+            )
+        } else {
+            (24.0, "more than one local clone in cluster".into())
+        };
         bump_risk(
             &mut scores,
-            24.0,
+            delta,
             &mut evidence,
             sid,
             MemberKind::Clone,
             "multiple_clones",
-            "more than one local clone in cluster",
+            &detail,
         );
+    }
+
+    // Risk: dirty non-canonical clones
+    if let Some(canon) = canonical_clone {
+        let dirty_others = clones
+            .iter()
+            .filter(|c| c.id != canon.id && c.is_dirty)
+            .count();
+        if dirty_others > 0 {
+            bump_risk(
+                &mut scores,
+                4.0 * dirty_others as f64,
+                &mut evidence,
+                &canon.id,
+                MemberKind::Clone,
+                "dirty_non_canonical_clones",
+                &format!(
+                    "{dirty_others} non-canonical clone(s) have uncommitted changes; potential data loss on cleanup"
+                ),
+            );
+        }
     }
 
     if remotes.is_empty() && !clones.is_empty() {
@@ -426,14 +554,65 @@ pub fn evaluate_cluster(
     }
 }
 
+/// Compute cluster confidence as a continuous value factoring multiple signals.
 fn cluster_confidence(clones: &[CloneRecord], remotes: &[RemoteRecord]) -> f64 {
-    if clones.len() + remotes.len() <= 1 {
-        0.5
-    } else if clones.len() > 1 && remotes.is_empty() {
-        0.55
-    } else {
-        0.8
+    let total_members = clones.len() + remotes.len();
+
+    if total_members == 0 {
+        return 0.0;
     }
+    if total_members == 1 {
+        return 0.5;
+    }
+
+    let mut conf: f64 = 0.5;
+
+    // Having both clones and remotes is a strong signal
+    if !clones.is_empty() && !remotes.is_empty() {
+        conf += 0.2;
+    }
+
+    // Multiple clones sharing a cluster key is moderate signal
+    if clones.len() > 1 {
+        conf += 0.05;
+    }
+
+    // Git metadata on canonical increases confidence
+    let has_git = clones.iter().any(|c| c.is_git && c.head_oid.is_some());
+    if has_git {
+        conf += 0.08;
+    }
+
+    // Fingerprint consistency: if multiple clones share fingerprints
+    let fps: Vec<&str> = clones
+        .iter()
+        .filter_map(|c| c.fingerprint.as_deref())
+        .filter(|fp| !fp.is_empty())
+        .collect();
+    if fps.len() >= 2 {
+        let first = fps[0];
+        let all_same = fps.iter().all(|fp| *fp == first);
+        if all_same {
+            conf += 0.1;
+        }
+    }
+
+    // Recent activity on any member
+    let now = Utc::now();
+    let has_recent = clones.iter().any(|c| {
+        c.last_commit_at
+            .map(|t| (now - t) <= Duration::days(90))
+            .unwrap_or(false)
+    }) || remotes.iter().any(|r| {
+        r.pushed_at
+            .map(|t| (now - t) <= Duration::days(90))
+            .unwrap_or(false)
+    });
+    if has_recent {
+        conf += 0.05;
+    }
+
+    conf.clamp(0.0, 1.0)
 }
 
 fn canonical_subject_tuple<'a>(
