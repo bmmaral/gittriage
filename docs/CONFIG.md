@@ -22,8 +22,11 @@ See `nexus.toml.example` in the repository root. Typical fields:
 | `include_hidden` | Whether to descend into hidden directories when scanning |
 | `[scan]` | Read limits and gitignore behavior |
 | `[planner]` | Ambiguity and publish-action thresholds; optional `canonical_pins`, `ignored_cluster_keys`, `archive_hint_cluster_keys`, `scoring_profile` (see `docs/SCORING_PROFILES.md`, `docs/CLI.md`) |
+| `[ai]` | Optional AI-assisted explanations; `enabled`, `api_base`, `model`, `max_tokens`, `temperature` (see `docs/CLI.md` § AI integration) |
 
 ## Environment
 
 - `NEXUS_CONFIG` — path to a `nexus.toml` file (see `nexus-config` crate: `ENV_NEXUS_CONFIG`).
+- `NEXUS_AI_API_KEY` — API key for AI features (takes precedence over `OPENAI_API_KEY`).
+- `OPENAI_API_KEY` — fallback API key for AI features.
 - `RUST_LOG` — standard `tracing` filter when you need verbose logs from components that emit them.

@@ -37,6 +37,28 @@ pub struct PlannerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct AiConfig {
+    pub enabled: bool,
+    pub api_base: String,
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_base: "https://api.openai.com/v1".into(),
+            model: "gpt-4o-mini".into(),
+            max_tokens: 1024,
+            temperature: 0.2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NexusConfig {
     pub db_path: PathBuf,
     pub default_roots: Vec<String>,
@@ -44,6 +66,7 @@ pub struct NexusConfig {
     pub include_hidden: bool,
     pub scan: ScanConfig,
     pub planner: PlannerConfig,
+    pub ai: AiConfig,
 }
 
 impl Default for ScanConfig {
@@ -80,6 +103,7 @@ impl Default for NexusConfig {
             include_hidden: false,
             scan: ScanConfig::default(),
             planner: PlannerConfig::default(),
+            ai: AiConfig::default(),
         }
     }
 }

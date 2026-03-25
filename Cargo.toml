@@ -12,6 +12,7 @@ members = [
   "crates/nexus-adapters",
     "crates/nexus-api",
     "crates/nexus-tui",
+    "crates/nexus-ai",
 ]
 resolver = "2"
 

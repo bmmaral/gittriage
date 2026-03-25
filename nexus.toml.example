@@ -19,3 +19,11 @@ ambiguous_cluster_threshold = 60
 # ignored_cluster_keys = ["name:experiment"]
 # archive_hint_cluster_keys = ["name:old-checkout"]
 # scoring_profile = "default"
+
+# Optional AI-assisted explanations (requires NEXUS_AI_API_KEY or OPENAI_API_KEY).
+# [ai]
+# enabled = false
+# api_base = "https://api.openai.com/v1"
+# model = "gpt-4o-mini"
+# max_tokens = 1024
+# temperature = 0.2

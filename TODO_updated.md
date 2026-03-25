@@ -95,7 +95,7 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
   - [x] evidence summary (optional JSON field `evidence_summary`, populated for key actions)
   - [x] confidence (optional `confidence` on `PlanAction`)
   - [x] risk/trade-off note (optional `risk_note` on `PlanAction`)
-- [ ] Add explicit handling for:
+- [x] Add explicit handling for:
   - [x] remote-only repos (`CloneLocalWorkspace` action + `remote_only_cluster` evidence)
   - [x] local-only repos (`CreateRemoteRepo` + `no_remote_linked` / `local_only_cluster` evidence)
   - [x] pivoted repos (heuristic: `duplicate_name_split_clusters` when same display name maps to different clusters / remotes)
@@ -122,9 +122,10 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 ### New commands
 - [x] Add `nexus explain` (`cluster` | `clone` | `remote`; text/json)
   - [x] deterministic explanation without AI
-  - [ ] optional AI-enhanced explanation when configured
+  - [x] optional AI-enhanced explanation when configured (`--ai` flag; `nexus-ai` crate)
 - [x] Add `nexus export`
 - [x] Add `nexus import` for saved inventory state / cross-machine comparison
+- [x] Add `nexus ai-summary` for plan-wide AI summaries
 - [ ] Decide whether `nexus suggest` ships in v1.x or later
 
 ### TUI
@@ -157,29 +158,29 @@ This TODO tracks the work needed to harden the CLI, formalize the scoring model,
 ## P5 — AI integration
 
 ### Optional AI support
-- [ ] Add config for OpenAI-compatible endpoints
-- [ ] Support user-supplied API key and base URL
-- [ ] Define the grounding contract: AI consumes structured Nexus output, not arbitrary repo state by default
-- [ ] Add safeguards so AI cannot silently change scores or canonical decisions
+- [x] Add config for OpenAI-compatible endpoints (`[ai]` table in `nexus.toml`; `nexus-config` `AiConfig`)
+- [x] Support user-supplied API key and base URL (`NEXUS_AI_API_KEY` / `OPENAI_API_KEY`; configurable `api_base`)
+- [x] Define the grounding contract: AI consumes structured Nexus output, not arbitrary repo state by default (`nexus-ai` `build_grounding_context`)
+- [x] Add safeguards so AI cannot silently change scores or canonical decisions (system prompt rules; read-only grounding; output labeled as model-generated)
 
 ### AI-assisted features
-- [ ] Ship AI-assisted explanation after deterministic `explain` exists
+- [x] Ship AI-assisted explanation after deterministic `explain` exists (`nexus explain --ai`; `nexus ai-summary`)
 - [ ] Evaluate AI-assisted `suggest` only after planning and scoring are stable
-- [ ] Add clear UX language indicating when output is deterministic vs model-generated
+- [x] Add clear UX language indicating when output is deterministic vs model-generated (CLI banners: "model-generated, not deterministic")
 
 ---
 
 ## P6 — Testing and QA
 
 ### Rust tests
-- [ ] Add or expand planner rule tests for:
-  - [ ] canonical clone selection
-  - [ ] remote-only projects
-  - [ ] local-only projects
-  - [ ] ambiguous duplicate clusters
-  - [ ] stale-but-important repos
-  - [ ] override/pinning behavior
-- [ ] Add snapshot tests for JSON plan/report stability
+- [x] Add or expand planner rule tests for:
+  - [x] canonical clone selection (`canonical_picks_freshest_clone_with_remote`, `canonical_prefers_clean_over_dirty`, `canonical_non_selected_gets_not_canonical_evidence`)
+  - [x] remote-only projects (`remote_only_cluster_suggests_clone_workspace`, `remote_only_has_no_archive_duplicate_actions`)
+  - [x] local-only projects (`local_only_clone_suggests_create_remote`, `local_only_bare_dir_has_lower_recoverability`)
+  - [x] ambiguous duplicate clusters (`many_same_name_clones_get_name_bucket_duplicate_evidence`, `ambiguous_cluster_has_higher_risk`)
+  - [x] stale-but-important repos (`stale_but_artifacted_gets_evidence_hint`, `very_stale_without_artifacts_has_elevated_risk`)
+  - [x] override/pinning behavior (`pin_overrides_canonical_even_for_stale_clone`, `ignored_key_clears_actions_keeps_scores`, `archive_hint_adds_evidence_keeps_actions`)
+- [x] Add snapshot tests for JSON plan/report stability (`plan_document_serializes_with_expected_fields`)
 - [x] Add regression tests for scoring explanations and evidence rendering (markdown snapshot; `not_canonical_clone` planner test)
 - [ ] Add tests for adapter absence/failure cases across all optional profiles
 

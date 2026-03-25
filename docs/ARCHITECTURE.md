@@ -55,6 +55,9 @@ Ratatui-based **read-only** cluster browser (`nexus tui`): sort/filter, evidence
 ### `nexus-adapters`
 Optional CLI integrations (jscpd, semgrep, gitleaks, syft) for plan evidence.
 
+### `nexus-ai`
+Optional AI-assisted explanations using OpenAI-compatible endpoints. Consumes structured plan output only (grounding contract); never modifies scores, canonical selections, or actions. Requires `ai.enabled = true` in config and `NEXUS_AI_API_KEY` or `OPENAI_API_KEY`. See `docs/CLI.md` for `nexus explain --ai` and `nexus ai-summary`.
+
 ### `nexus-api`
 Axum HTTP **read-only** API over SQLite (powers **`serve`** only). Experimental and secondary to the CLI; not a dashboard backend.
 

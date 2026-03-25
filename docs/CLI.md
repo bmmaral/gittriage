@@ -14,7 +14,8 @@ These commands are the **intended stable surface** for repo fleet triage (names 
 | `tools` | Optional external adapters on `PATH` (`--format json` for scripts) |
 | `export` | JSON envelope with `inventory` (optional `--with-plan`) for backup or transfer |
 | `import` | Replace DB inventory from export JSON (clears persisted plan); requires `--force` |
-| `explain` | One cluster’s scores, evidence, and actions (by cluster query or clone/remote id) |
+| `explain` | One cluster’s scores, evidence, and actions (by cluster query or clone/remote id); optional `--ai` narrative |
+| `ai-summary` | AI-generated executive summary of the full plan (requires `ai.enabled = true`) |
 | `tui` | Interactive terminal table over the current plan (sort/filter, evidence, pin hint, export JSON); read-only |
 
 **Helpers / previews**
@@ -176,9 +177,21 @@ nexus import backup.json --force
 
 Subcommands: `cluster <ID_OR_LABEL>`, `clone <CLONE_ID>`, `remote <REMOTE_ID>`. Resolves a cluster (exact id, case-insensitive label, or unique substring for `cluster`), then prints text or `--format json`. Uses the same `--no-merge-base` and `--external` switches as `score`/`plan`.
 
+- `--ai` — Append an AI-generated narrative explanation after the deterministic output. Requires `ai.enabled = true` in `nexus.toml` and `NEXUS_AI_API_KEY` or `OPENAI_API_KEY`. The AI output is clearly labeled as model-generated.
+
 ```bash
 nexus explain cluster my-repo
 nexus explain clone clone-abc --format json
+nexus explain cluster my-repo --ai
+```
+
+### `nexus ai-summary`
+
+Generate an AI-powered executive summary of the full plan. Requires `ai.enabled = true` in `nexus.toml` and an API key (`NEXUS_AI_API_KEY` or `OPENAI_API_KEY`). The output is clearly labeled as model-generated and never modifies deterministic scores or actions.
+
+```bash
+nexus ai-summary
+nexus ai-summary --no-merge-base --external
 ```
 
 ### `nexus tui`
@@ -208,9 +221,29 @@ nexus tui
 nexus tui --no-merge-base --external
 ```
 
+## AI integration
+
+Nexus can optionally use an OpenAI-compatible LLM to generate narrative explanations grounded in deterministic plan data. AI never modifies scores, canonical selections, or actions.
+
+**Configuration** (`nexus.toml`):
+
+```toml
+[ai]
+enabled = true
+api_base = "https://api.openai.com/v1"   # or any compatible endpoint
+model = "gpt-4o-mini"
+max_tokens = 1024
+temperature = 0.2
+```
+
+**Environment:** Set `NEXUS_AI_API_KEY` or `OPENAI_API_KEY`.
+
+**Commands:** `nexus explain --ai` (per-cluster narrative), `nexus ai-summary` (plan-wide summary).
+
+All AI output is clearly labeled as model-generated. When AI is disabled or misconfigured, commands exit with a clear error message.
+
 ## Planned next-layer commands
 
 (Not necessarily in the first tagged v1 release.)
 
 - `nexus suggest` — AI-assisted suggestions grounded in Nexus output (optional)
-- Optional **AI**-enhanced natural language on top of deterministic `explain` (see `docs/PRODUCT_STRATEGY.md`)

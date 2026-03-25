@@ -13,3 +13,6 @@ uuid.workspace = true
 
 nexus-core = { path = "../nexus-core" }
 nexus-git = { path = "../nexus-git" }
+
+[dev-dependencies]
+serde_json.workspace = true

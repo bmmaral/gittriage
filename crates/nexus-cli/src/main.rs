@@ -116,8 +116,18 @@ enum Commands {
         external: bool,
         #[arg(long, default_value = "text")]
         format: explain::ExplainFormat,
+        /// Add an AI-generated narrative explanation (requires `ai.enabled = true` in config and API key).
+        #[arg(long)]
+        ai: bool,
         #[command(subcommand)]
         target: explain::ExplainTarget,
+    },
+    /// AI-generated executive summary of the full plan (requires `ai.enabled = true`).
+    AiSummary {
+        #[arg(long)]
+        no_merge_base: bool,
+        #[arg(long)]
+        external: bool,
     },
 }
 
@@ -253,8 +263,13 @@ fn main() -> Result<()> {
             no_merge_base,
             external,
             format,
+            ai,
             target,
-        } => cmd_explain(&db, &bundle, target, format, no_merge_base, external),
+        } => cmd_explain(&db, &bundle, target, format, no_merge_base, external, ai),
+        Commands::AiSummary {
+            no_merge_base,
+            external,
+        } => cmd_ai_summary(&db, &bundle, no_merge_base, external),
     }
 }
 
@@ -488,6 +503,7 @@ fn cmd_explain(
     format: explain::ExplainFormat,
     no_merge_base: bool,
     external: bool,
+    ai: bool,
 ) -> Result<()> {
     let snapshot = db.load_inventory()?;
     let opts = plan_build_opts(bundle, !no_merge_base);
@@ -495,7 +511,55 @@ fn cmd_explain(
     if external {
         nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
     }
-    explain::run_explain(&snapshot, &plan, target, format)
+    explain::run_explain(&snapshot, &plan, target, format)?;
+
+    if ai {
+        let ai_cfg = nexus_ai::AiConfig {
+            enabled: bundle.config.ai.enabled,
+            api_base: bundle.config.ai.api_base.clone(),
+            model: bundle.config.ai.model.clone(),
+            max_tokens: bundle.config.ai.max_tokens,
+            temperature: bundle.config.ai.temperature,
+        };
+        let cp = plan
+            .clusters
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no clusters in plan"))?;
+        let rt = tokio::runtime::Runtime::new()?;
+        let narrative = rt.block_on(nexus_ai::explain_cluster(&ai_cfg, cp))?;
+        println!("\n── AI explanation (model-generated, not deterministic) ──\n");
+        println!("{narrative}");
+    }
+    Ok(())
+}
+
+fn cmd_ai_summary(
+    db: &Database,
+    bundle: &ConfigBundle,
+    no_merge_base: bool,
+    external: bool,
+) -> Result<()> {
+    let ai_cfg = nexus_ai::AiConfig {
+        enabled: bundle.config.ai.enabled,
+        api_base: bundle.config.ai.api_base.clone(),
+        model: bundle.config.ai.model.clone(),
+        max_tokens: bundle.config.ai.max_tokens,
+        temperature: bundle.config.ai.temperature,
+    };
+    ai_cfg.validate()?;
+
+    let snapshot = db.load_inventory()?;
+    let opts = plan_build_opts(bundle, !no_merge_base);
+    let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+    }
+
+    let rt = tokio::runtime::Runtime::new()?;
+    let summary = rt.block_on(nexus_ai::summarize_plan(&ai_cfg, &plan))?;
+    println!("── AI plan summary (model-generated, not deterministic) ──\n");
+    println!("{summary}");
+    Ok(())
 }
 
 fn cmd_score(
