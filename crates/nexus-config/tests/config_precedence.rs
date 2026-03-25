@@ -54,6 +54,10 @@ impl Drop for CwdGuard {
     }
 }
 
+fn canonical_or_identity(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 #[test]
 fn explicit_config_path_beats_nexus_config_env() {
     let _lock = SUITE_LOCK.lock().expect("suite lock");
@@ -119,5 +123,10 @@ default_roots = []
     let _cwd = CwdGuard::chdir(dir.path()).expect("chdir");
     let bundle = ConfigBundle::load(None).expect("load cwd file");
     assert_eq!(bundle.config.db_path, PathBuf::from("/cwd/db.sqlite"));
-    assert_eq!(bundle.source_path.as_ref(), Some(&local));
+    let loaded = bundle.source_path.as_ref().expect("source path should be set");
+    assert_eq!(
+        canonical_or_identity(loaded),
+        canonical_or_identity(&local),
+        "source path should resolve to local nexus.toml",
+    );
 }
