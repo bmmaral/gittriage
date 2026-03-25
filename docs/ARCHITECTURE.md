@@ -32,16 +32,16 @@ Pure domain types and shared enums.
 Config file loading and defaults.
 
 ### `nexus-db`
-SQLite connection and persistence boundary. Full inventory replace (`replace_inventory_snapshot`) backs **`nexus import`** and clears persisted plan rows.
+SQLite connection and persistence boundary. Uses WAL mode, `busy_timeout`, and schema versioning (`nexus_meta` table). Full inventory replace (`replace_inventory_snapshot`) backs **`nexus import`** and clears persisted plan rows.
 
 ### `nexus-scan`
-Filesystem scanning and project metadata extraction.
+Filesystem scanning and project metadata extraction. Supports `git_only` (default) and `project_roots` scan modes, `max_depth`, `.nexusignore` patterns, and automatic stop-at-`.git` to prevent monorepo sub-package noise. Detects SPDX license identifiers, lockfiles, CI configs, and test directories.
 
 ### `nexus-git`
 Git metadata collection via system `git` in v1.
 
 ### `nexus-github`
-Remote repository ingest via `gh` CLI in v1.
+Remote repository ingest via `gh` CLI in v1. Supports up to 5000 repos per owner with truncation warnings.
 
 ### `nexus-plan`
 Clustering, scoring, and action generation.
@@ -59,7 +59,7 @@ Optional CLI integrations (jscpd, semgrep, gitleaks, syft) for plan evidence.
 Optional AI-assisted explanations using OpenAI-compatible endpoints. Consumes structured plan output only (grounding contract); never modifies scores, canonical selections, or actions. Requires `ai.enabled = true` in config and `NEXUS_AI_API_KEY` or `OPENAI_API_KEY`. See `docs/CLI.md` for `nexus explain --ai` and `nexus ai-summary`.
 
 ### `nexus-api`
-Axum HTTP **read-only** API over SQLite (powers **`serve`** only). Experimental and secondary to the CLI; not a dashboard backend.
+Axum HTTP **read-only** API over SQLite (powers **`serve`** only). Binds to `127.0.0.1` by default; loads config once at startup. Experimental and secondary to the CLI; not a dashboard backend.
 
 ### `nexus-cli`
 Thin orchestration layer.

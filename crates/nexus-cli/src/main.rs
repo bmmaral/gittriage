@@ -53,6 +53,9 @@ enum Commands {
         /// Run optional external scanners on canonical clones.
         #[arg(long)]
         external: bool,
+        /// Scoring profile: default, publish, open_source, security, ai_handoff.
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Resolve clusters, score, attach actions, and write a JSON plan.
     Plan {
@@ -65,12 +68,18 @@ enum Commands {
         /// Run optional external scanners on canonical clones.
         #[arg(long)]
         external: bool,
+        /// Scoring profile: default, publish, open_source, security, ai_handoff.
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Render a human-readable report (Markdown or JSON) from inventory.
     Report {
         /// Output format.
         #[arg(long, default_value = "md")]
         format: ReportFormat,
+        /// Scoring profile: default, publish, open_source, security, ai_handoff.
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Check environment, config, database, and tool availability.
     Doctor {
@@ -92,6 +101,9 @@ enum Commands {
         /// Port to listen on.
         #[arg(long, default_value_t = 3030)]
         port: u16,
+        /// Listen address (default: 127.0.0.1; use 0.0.0.0 for network access).
+        #[arg(long, default_value = "127.0.0.1")]
+        listen: std::net::IpAddr,
     },
     /// Show which optional external scanners are on PATH.
     Tools {
@@ -146,6 +158,9 @@ enum Commands {
         /// Append an AI-generated narrative (requires ai.enabled + API key).
         #[arg(long)]
         ai: bool,
+        /// Scoring profile: default, publish, open_source, security, ai_handoff.
+        #[arg(long)]
+        profile: Option<String>,
         #[command(subcommand)]
         target: explain::ExplainTarget,
     },
@@ -265,21 +280,28 @@ fn main() -> Result<()> {
             format,
             no_merge_base,
             external,
-        } => cmd_score(&db, &bundle, format, no_merge_base, external),
+            profile,
+        } => cmd_score(&db, &bundle, format, no_merge_base, external, profile),
         Commands::Plan {
             write,
             no_merge_base,
             external,
-        } => cmd_plan(&mut db, &bundle, &write, no_merge_base, external),
-        Commands::Report { format } => cmd_report(&db, &bundle, format),
+            profile,
+        } => cmd_plan(&mut db, &bundle, &write, no_merge_base, external, profile),
+        Commands::Report { format, profile } => cmd_report(&db, &bundle, format, profile),
         Commands::Doctor { format } => cmd_doctor(&bundle, format),
         Commands::Apply { dry_run, format } => cmd_apply(&db, &bundle, dry_run, format),
-        Commands::Serve { port } => {
+        Commands::Serve { port, listen } => {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .context("tokio runtime")?;
-            rt.block_on(nexus_api::serve(bundle.effective_db_path.clone(), port))?;
+            rt.block_on(nexus_api::serve(
+                bundle.effective_db_path.clone(),
+                port,
+                listen,
+                bundle.clone(),
+            ))?;
             Ok(())
         }
         Commands::Tools { format } => cmd_tools(format),
@@ -299,8 +321,18 @@ fn main() -> Result<()> {
             external,
             format,
             ai,
+            profile,
             target,
-        } => cmd_explain(&db, &bundle, target, format, no_merge_base, external, ai),
+        } => cmd_explain(
+            &db,
+            &bundle,
+            target,
+            format,
+            no_merge_base,
+            external,
+            ai,
+            profile,
+        ),
         Commands::AiSummary {
             no_merge_base,
             external,
@@ -330,6 +362,11 @@ fn cmd_scan(
         roots
     };
 
+    let scan_mode = match config.scan.scan_mode {
+        nexus_config::ScanMode::GitOnly => nexus_scan::ScanMode::GitOnly,
+        nexus_config::ScanMode::ProjectRoots => nexus_scan::ScanMode::ProjectRoots,
+    };
+
     let t_scan = std::time::Instant::now();
     let mut clones = nexus_scan::scan_roots(
         &resolved_roots,
@@ -338,6 +375,8 @@ fn cmd_scan(
             include_hidden: config.include_hidden,
             max_readme_bytes: config.scan.max_readme_bytes,
             max_hash_files: config.scan.max_hash_files,
+            scan_mode,
+            max_depth: config.scan.max_depth,
         },
     )?;
     let scan_ms = t_scan.elapsed().as_millis();
@@ -535,6 +574,7 @@ fn cmd_import(db: &mut Database, path: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_explain(
     db: &Database,
     bundle: &ConfigBundle,
@@ -543,9 +583,14 @@ fn cmd_explain(
     no_merge_base: bool,
     external: bool,
     ai: bool,
+    profile: Option<String>,
 ) -> Result<()> {
     let snapshot = db.load_inventory()?;
-    let opts = plan_build_opts(bundle, !no_merge_base);
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, !no_merge_base);
     let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     if external {
         nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
@@ -607,10 +652,15 @@ fn cmd_score(
     format: ScoreFormat,
     no_merge_base: bool,
     external: bool,
+    profile: Option<String>,
 ) -> Result<()> {
     let t0 = std::time::Instant::now();
     let snapshot = db.load_inventory()?;
-    let opts = plan_build_opts(bundle, !no_merge_base);
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, !no_merge_base);
     let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     if external {
         nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
@@ -693,10 +743,15 @@ fn cmd_plan(
     write: &Path,
     no_merge_base: bool,
     external: bool,
+    profile: Option<String>,
 ) -> Result<()> {
     let t0 = std::time::Instant::now();
     let snapshot = db.load_inventory()?;
-    let opts = plan_build_opts(bundle, !no_merge_base);
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, !no_merge_base);
     let mut plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     if external {
         nexus_adapters::attach_external_evidence(&mut plan, &snapshot)?;
@@ -732,9 +787,18 @@ fn cmd_plan(
     Ok(())
 }
 
-fn cmd_report(db: &Database, bundle: &ConfigBundle, format: ReportFormat) -> Result<()> {
+fn cmd_report(
+    db: &Database,
+    bundle: &ConfigBundle,
+    format: ReportFormat,
+    profile: Option<String>,
+) -> Result<()> {
     let snapshot: InventorySnapshot = db.load_inventory()?;
-    let opts = plan_build_opts(bundle, true);
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, true);
     let plan = nexus_plan::build_plan_with(&snapshot, opts)?;
     match format {
         ReportFormat::Md => {

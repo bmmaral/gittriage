@@ -8,12 +8,24 @@ use std::path::{Path, PathBuf};
 /// Environment variable pointing at a `nexus.toml` file. Highest precedence after explicit CLI `--config`.
 pub const ENV_NEXUS_CONFIG: &str = "NEXUS_CONFIG";
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanMode {
+    /// Only directories with `.git` are considered project roots (default).
+    #[default]
+    GitOnly,
+    /// Directories with `.git` or common manifest files.
+    ProjectRoots,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScanConfig {
     pub respect_gitignore: bool,
     pub max_readme_bytes: usize,
     pub max_hash_files: usize,
+    pub scan_mode: ScanMode,
+    pub max_depth: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +87,8 @@ impl Default for ScanConfig {
             respect_gitignore: true,
             max_readme_bytes: 16 * 1024,
             max_hash_files: 64,
+            scan_mode: ScanMode::default(),
+            max_depth: None,
         }
     }
 }
@@ -114,7 +128,8 @@ pub struct ConfigBundle {
     pub config: NexusConfig,
     /// TOML file that was loaded, if any.
     pub source_path: Option<PathBuf>,
-    /// Absolute path used for SQLite (relative `db_path` entries are resolved from the process cwd).
+    /// Absolute path used for SQLite. Relative `db_path` is resolved from the config file's
+    /// parent directory when a config file exists, otherwise from the process cwd.
     pub effective_db_path: PathBuf,
 }
 
@@ -127,8 +142,12 @@ impl ConfigBundle {
     /// 5. Built-in defaults (no file)
     pub fn load(explicit: Option<&Path>) -> Result<Self> {
         let (config, source_path) = load_layered(explicit)?;
-        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let effective_db_path = resolve_db_path_with_cwd(&config.db_path, &cwd);
+        let base = source_path
+            .as_deref()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let effective_db_path = resolve_db_path(&config.db_path, &base);
         Ok(Self {
             config,
             source_path,
@@ -187,12 +206,31 @@ fn ensure_config_exists(path: &Path) -> Result<()> {
     }
 }
 
-fn resolve_db_path_with_cwd(db_path: &Path, cwd: &Path) -> PathBuf {
+fn resolve_db_path(db_path: &Path, base: &Path) -> PathBuf {
     if db_path.is_absolute() {
         db_path.to_path_buf()
     } else {
-        cwd.join(db_path)
+        let expanded = expand_tilde(db_path);
+        if expanded.is_absolute() {
+            expanded
+        } else {
+            base.join(expanded)
+        }
     }
+}
+
+fn expand_tilde(p: &Path) -> PathBuf {
+    if let Ok(s) = p.strip_prefix("~") {
+        if let Ok(home) = env::var("HOME") {
+            return PathBuf::from(home).join(s);
+        }
+        if let Some(dirs) = ProjectDirs::from("org", "nexus", "nexus") {
+            if let Some(home) = dirs.data_dir().parent().and_then(|p| p.parent()) {
+                return home.to_path_buf().join(s);
+            }
+        }
+    }
+    p.to_path_buf()
 }
 
 pub fn default_config_path() -> PathBuf {
@@ -243,21 +281,28 @@ max_hash_files = 1
 
     #[test]
     fn resolve_db_path_absolute_unchanged() {
-        let cwd = Path::new("/tmp/wd");
+        let base = Path::new("/tmp/wd");
         let p = Path::new("/var/db.sqlite");
+        assert_eq!(resolve_db_path(p, base), PathBuf::from("/var/db.sqlite"));
+    }
+
+    #[test]
+    fn resolve_db_path_relative_joins_base() {
+        let base = Path::new("/home/user/proj");
+        let p = Path::new(".nexus/state.db");
         assert_eq!(
-            resolve_db_path_with_cwd(p, cwd),
-            PathBuf::from("/var/db.sqlite")
+            resolve_db_path(p, base),
+            PathBuf::from("/home/user/proj/.nexus/state.db")
         );
     }
 
     #[test]
-    fn resolve_db_path_relative_joins_cwd() {
-        let cwd = Path::new("/home/user/proj");
-        let p = Path::new(".nexus/state.db");
-        assert_eq!(
-            resolve_db_path_with_cwd(p, cwd),
-            PathBuf::from("/home/user/proj/.nexus/state.db")
+    fn expand_tilde_resolves_home() {
+        let p = Path::new("~/data/nexus.db");
+        let expanded = expand_tilde(p);
+        assert!(
+            expanded.is_absolute() || std::env::var("HOME").is_err(),
+            "tilde should expand to an absolute path when HOME is set"
         );
     }
 }

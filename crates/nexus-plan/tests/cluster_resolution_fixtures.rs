@@ -23,6 +23,9 @@ fn sample_clone(id: &str, name: &str) -> CloneRecord {
         readme_title: Some(name.into()),
         license_spdx: Some("MIT".into()),
         fingerprint: None,
+        has_lockfile: false,
+        has_ci: false,
+        has_tests_dir: false,
     }
 }
 

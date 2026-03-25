@@ -52,6 +52,7 @@ fn plan_build_opts_from_bundle(bundle: &nexus_config::ConfigBundle) -> nexus_pla
 #[derive(Clone)]
 pub struct AppState {
     pub db_path: PathBuf,
+    pub bundle: nexus_config::ConfigBundle,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -71,8 +72,8 @@ async fn plan_json(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let path = state.db_path.clone();
+    let bundle = state.bundle.clone();
     let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
-        let bundle = nexus_config::ConfigBundle::load(None)?;
         let db = Database::open(&path)?;
         let snap = db.load_inventory()?;
         let opts = plan_build_opts_from_bundle(&bundle);
@@ -117,11 +118,16 @@ impl<E: Into<anyhow::Error>> From<E> for ApiError {
     }
 }
 
-pub async fn serve(db_path: PathBuf, port: u16) -> anyhow::Result<()> {
-    let state = Arc::new(AppState { db_path });
+pub async fn serve(
+    db_path: PathBuf,
+    port: u16,
+    listen: std::net::IpAddr,
+    bundle: nexus_config::ConfigBundle,
+) -> anyhow::Result<()> {
+    let state = Arc::new(AppState { db_path, bundle });
     let app = router(state);
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
-    tracing::info!(%port, "nexus API listening");
+    let listener = tokio::net::TcpListener::bind((listen, port)).await?;
+    tracing::info!(%listen, %port, "nexus API listening");
     axum::serve(listener, app).await?;
     Ok(())
 }

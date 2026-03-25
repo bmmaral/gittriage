@@ -88,6 +88,9 @@ fn merge_base_evidence_is_attached_best_effort() {
         readme_title: None,
         license_spdx: None,
         fingerprint: None,
+        has_lockfile: false,
+        has_ci: false,
+        has_tests_dir: false,
     };
     let clone_b = CloneRecord {
         id: "clone-b".into(),
@@ -104,6 +107,9 @@ fn merge_base_evidence_is_attached_best_effort() {
         readme_title: None,
         license_spdx: None,
         fingerprint: None,
+        has_lockfile: false,
+        has_ci: false,
+        has_tests_dir: false,
     };
 
     let snapshot = InventorySnapshot {

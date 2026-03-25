@@ -75,6 +75,16 @@ pub struct CloneRecord {
     pub readme_title: Option<String>,
     pub license_spdx: Option<String>,
     pub fingerprint: Option<String>,
+    /// Scan-time only: true when a lockfile (Cargo.lock, package-lock.json, …) is present.
+    /// Not persisted in SQLite; defaults to false when loaded from DB.
+    #[serde(default)]
+    pub has_lockfile: bool,
+    /// Scan-time only: true when a CI configuration (.github/workflows, .gitlab-ci.yml, …) is present.
+    #[serde(default)]
+    pub has_ci: bool,
+    /// Scan-time only: true when a test directory (tests/, test/, spec/, …) is present.
+    #[serde(default)]
+    pub has_tests_dir: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 blake3.workspace = true
+glob = "0.3"
 ignore.workspace = true
 regex.workspace = true
 serde.workspace = true
@@ -15,3 +16,6 @@ uuid.workspace = true
 walkdir.workspace = true
 
 nexus-core = { path = "../nexus-core" }
+
+[dev-dependencies]
+tempfile = "3"

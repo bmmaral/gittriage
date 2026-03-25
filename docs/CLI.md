@@ -44,9 +44,11 @@ Precedence (first match wins):
 4. XDG config: `nexus.toml` under the OS config dir (`ProjectDirs`, qualifier `org.nexus.nexus`)
 5. Built-in defaults (no file)
 
-Relative `db_path` values are resolved against the **current working directory**. See `nexus.toml.example`.
+Relative `db_path` values are resolved against the **config file's parent directory** when a config file is found, or the current working directory when using built-in defaults. Tilde (`~`) is expanded. See `nexus.toml.example`.
 
-The **`[planner]`** table also drives planning: ambiguity cutoff (`ambiguous_cluster_threshold`), when to suggest archiving duplicates vs canonical strength (`archive_duplicate_threshold`), publish-hygiene actions vs `oss_readiness` (`oss_candidate_threshold`), optional **`canonical_pins`** (clone ids), **`ignored_cluster_keys`** / **`archive_hint_cluster_keys`** (exact `cluster_key` from JSON output), and optional **`scoring_profile`** (`docs/SCORING_PROFILES.md`). `score`, `plan`, `report`, `export --with-plan`, `explain`, and `apply --dry-run` all use the loaded config; experimental `serve` resolves config from its process working directory.
+The **`[scan]`** table controls scanning behavior: `scan_mode` (`git_only` default, `project_roots`), `max_depth` (optional traversal limit), `respect_gitignore`, `max_readme_bytes`, and `max_hash_files`. Place a `.nexusignore` file in any scan root with glob patterns to exclude directories.
+
+The **`[planner]`** table drives planning: ambiguity cutoff (`ambiguous_cluster_threshold`), when to suggest archiving duplicates vs canonical strength (`archive_duplicate_threshold`), publish-hygiene actions vs `oss_readiness` (`oss_candidate_threshold`), optional **`canonical_pins`** (clone ids), **`ignored_cluster_keys`** / **`archive_hint_cluster_keys`** (exact `cluster_key` from JSON output), and optional **`scoring_profile`** (`docs/SCORING_PROFILES.md`). The `--profile` flag on `score`, `plan`, `report`, and `explain` overrides the config value. `serve` loads config once at startup.
 
 ## Commands
 
@@ -68,6 +70,7 @@ Compute cluster **scores** and **evidence** from the latest inventory. Does **no
 - `--format json` — JSON with `kind: "nexus_scores"`, `schema_version`, and a `clusters` array of `ClusterRecord` objects (same `scores` shape as `plan.json`, without per-cluster actions).
 - `--no-merge-base` — skip pairwise `git merge-base` evidence between git clones in the same cluster.
 - `--external` — when **gitleaks**, **semgrep**, **jscpd**, or **syft** are on `PATH`, run them on canonical clones and attach evidence (can be slow).
+- `--profile <NAME>` — override `planner.scoring_profile` from config. Accepts: `default`, `publish`, `open_source`, `security`, `ai_handoff`.
 
 Example:
 
@@ -82,6 +85,7 @@ Resolve clusters, score them, optionally attach external evidence, write a deter
 
 - `--no-merge-base` — skip pairwise `git merge-base` evidence between git clones in the same cluster.
 - `--external` — optional scanners on canonical clones (see above).
+- `--profile <NAME>` — override `planner.scoring_profile` from config.
 
 Example:
 
@@ -133,16 +137,19 @@ nexus apply --dry-run --format json
 
 ### `nexus serve` (experimental)
 
-Read-only HTTP JSON API (requires a configured/openable SQLite DB). Intended for **local** inspection only; not a web product. Treat URLs and JSON shapes as **unstable** until promoted in release notes.
+Read-only HTTP JSON API (requires a configured/openable SQLite DB). Intended for **local** inspection only; not a web product. Treat URLs and JSON shapes as **unstable** until promoted in release notes. Config is loaded once at startup (not per-request).
 
+- `--port <PORT>` — listen port (default: 3030).
+- `--listen <IP>` — bind address (default: `127.0.0.1`; use `0.0.0.0` for network access).
 - `GET /health`
-- `GET /v1/plan` — current plan JSON (recomputed from inventory)
+- `GET /v1/plan` — current plan JSON (recomputed from inventory using startup config)
 - `GET /v1/inventory` — clone / remote / link counts
 
 Example:
 
 ```bash
 nexus serve --port 3030
+nexus serve --port 8080 --listen 0.0.0.0
 ```
 
 ### `nexus tools`
@@ -183,6 +190,7 @@ nexus import backup.json --force
 Subcommands: `cluster <ID_OR_LABEL>`, `clone <CLONE_ID>`, `remote <REMOTE_ID>`. Resolves a cluster (exact id, case-insensitive label, or unique substring for `cluster`), then prints text or `--format json`. Uses the same `--no-merge-base` and `--external` switches as `score`/`plan`.
 
 - `--ai` — Append an AI-generated narrative explanation after the deterministic output. Requires `ai.enabled = true` in `nexus.toml` and `NEXUS_AI_API_KEY` or `OPENAI_API_KEY`. The AI output is clearly labeled as model-generated.
+- `--profile <NAME>` — override `planner.scoring_profile` from config.
 
 ```bash
 nexus explain cluster my-repo

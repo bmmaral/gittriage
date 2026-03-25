@@ -35,6 +35,9 @@ fn load_inventory_includes_latest_run() {
             readme_title: None,
             license_spdx: None,
             fingerprint: None,
+            has_lockfile: false,
+            has_ci: false,
+            has_tests_dir: false,
         }],
     )
     .expect("save_clones");

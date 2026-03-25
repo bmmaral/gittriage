@@ -4,9 +4,10 @@ The first Nexus experiments lived in this repository as a **project-memory** sta
 
 ## Where it went
 
-- **Archival branch:** `legacy/v1-python-ts` — should point at the **last commit that still contained** the Python/TypeScript tree (before the Rust-only cleanup). Push it with `git push origin legacy/v1-python-ts` so clones can fetch it.
-- **Tag:** `legacy-py-mvp` — optional annotated marker for the same era. On the tip of `legacy/v1-python-ts`, run `./scripts/tag-legacy-python.sh` (idempotent if the tag already points at `HEAD`), then `git push origin legacy-py-mvp`.
-- If you checked out the archival branch and its tree has an older copy of the script, use the version from `main`: `bash <(git show main:scripts/tag-legacy-python.sh)` (after `git fetch`).
+- **Archival branch:** `legacy/v1-python-ts` — points at the last commit that contained the Python/TypeScript tree (before the Rust-only cleanup).
+- **Tag:** `legacy-py-mvp` — annotated marker for the same era, on the tip of the archival branch.
+
+Both are available on the remote (`git fetch origin legacy/v1-python-ts`). No legacy code, scripts, or documents exist on `main`.
 
 ## Moving to Nexus v2 (Rust)
 
@@ -18,4 +19,4 @@ The supported product is the Rust workspace under `crates/`:
 
 ## Historical PRD
 
-`prd.md` describes the old “AI project memory” vision. The executable product on `main` is the Rust CLI; use `README.md` and `docs/ARCHITECTURE.md` for the current system.
+The old "AI project memory" PRD (`prd.md`) exists only on the `legacy/v1-python-ts` branch. The executable product on `main` is the Rust CLI; use `README.md` and `docs/ARCHITECTURE.md` for the current system.

@@ -8,6 +8,8 @@ include_hidden = false
 respect_gitignore = true
 max_readme_bytes = 16384
 max_hash_files = 64
+# scan_mode = "git_only"    # "git_only" (default) or "project_roots"
+# max_depth = 5             # optional: limit directory traversal depth
 
 [planner]
 archive_duplicate_threshold = 80

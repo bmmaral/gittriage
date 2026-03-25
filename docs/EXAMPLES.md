@@ -36,6 +36,38 @@ nexus explain cluster my-repo --format json
 nexus explain cluster my-repo --ai         # add AI narrative (requires config)
 ```
 
+## Scoring profiles
+
+Override the config-file profile with `--profile` on `score`, `plan`, `report`, or `explain`:
+
+```bash
+nexus score --profile security
+nexus plan --write plan.json --profile publish
+nexus explain cluster my-repo --profile ai_handoff
+```
+
+Available profiles: `default`, `publish`, `open_source`, `security`, `ai_handoff` (see `docs/SCORING_PROFILES.md`).
+
+## Scan modes and filtering
+
+By default, Nexus only considers directories with `.git` as project roots (`git_only` mode). To also include directories with manifest files (Cargo.toml, package.json, etc.):
+
+```toml
+# nexus.toml
+[scan]
+scan_mode = "project_roots"
+max_depth = 5
+```
+
+Place a `.nexusignore` file in any scan root to exclude directories:
+
+```text
+# .nexusignore
+node_modules
+.cache
+vendor
+```
+
 ## AI-optional flow
 
 Core commands (`scan`, `score`, `plan`, `report`, `doctor`) are fully deterministic. No API keys are required.

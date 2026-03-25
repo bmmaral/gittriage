@@ -215,7 +215,7 @@ The **Rust binary is the real product**.
 
 The npm/bun package should be a thin wrapper that fetches the correct prebuilt binary. It should not reimplement Nexus in JavaScript.
 
-### Nice-to-have later
+### Supported templates (shipped)
 
 - Scoop
 - AUR

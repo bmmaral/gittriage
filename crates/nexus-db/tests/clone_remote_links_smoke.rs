@@ -34,6 +34,9 @@ fn replace_clone_remote_links_replaces_existing_rows() {
         readme_title: None,
         license_spdx: None,
         fingerprint: None,
+        has_lockfile: false,
+        has_ci: false,
+        has_tests_dir: false,
     };
     db.save_clones(&run.id, &[clone]).expect("save clone");
 

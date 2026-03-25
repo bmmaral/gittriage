@@ -25,6 +25,9 @@ fn clone_with(id: &str, name: &str, days_ago: i64, dirty: bool) -> CloneRecord {
         readme_title: Some(name.into()),
         license_spdx: Some("MIT".into()),
         fingerprint: Some(format!("fp-{id}")),
+        has_lockfile: false,
+        has_ci: false,
+        has_tests_dir: false,
     }
 }
 
@@ -44,6 +47,9 @@ fn bare_clone(id: &str, name: &str) -> CloneRecord {
         readme_title: None,
         license_spdx: None,
         fingerprint: None,
+        has_lockfile: false,
+        has_ci: false,
+        has_tests_dir: false,
     }
 }
 

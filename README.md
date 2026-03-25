@@ -35,6 +35,7 @@ nexus score --format text
 nexus plan --write plan.json
 nexus report --format md
 nexus tui                                # interactive terminal browser
+nexus score --profile security           # override scoring profile from CLI
 ```
 
 ## Install
@@ -61,9 +62,9 @@ cargo build --release -p nexus-cli
 | Command | What it does |
 | :--- | :--- |
 | `scan` | Discover local repos; optional GitHub ingest |
-| `score` | Compute scores + evidence from inventory |
-| `plan` | Resolve clusters → score → actions → write JSON plan |
-| `report` | Markdown or JSON from a fresh plan |
+| `score` | Compute scores + evidence from inventory (`--profile` to override) |
+| `plan` | Resolve clusters → score → actions → write JSON plan (`--profile`) |
+| `report` | Markdown or JSON from a fresh plan (`--profile`) |
 | `doctor` | Environment and DB sanity checks |
 | `tools` | Which optional scanners are on `PATH` |
 | `export` | JSON inventory (optional embedded plan via `--with-plan`) |
@@ -114,16 +115,16 @@ See [`docs/CLI.md`](docs/CLI.md) for flags, examples, and TUI keybindings.
 | :--- | :--- |
 | `nexus-core` | Domain types (`CloneRecord`, `ClusterRecord`, `PlanDocument`, etc.) |
 | `nexus-config` | Config loading (`nexus.toml`) |
-| `nexus-db` | SQLite persistence |
-| `nexus-scan` | Filesystem + directory walking |
+| `nexus-db` | SQLite persistence (WAL mode, schema versioning) |
+| `nexus-scan` | Filesystem walking, SPDX sniffing, project cue detection |
 | `nexus-git` | Git metadata extraction |
-| `nexus-github` | `gh` CLI ingest |
+| `nexus-github` | `gh` CLI ingest (5000-repo pagination) |
 | `nexus-plan` | Clustering, scoring engine, action generation |
 | `nexus-report` | Markdown / JSON report rendering |
 | `nexus-adapters` | Optional external tool hooks (gitleaks, semgrep, syft, jscpd) |
 | `nexus-tui` | Ratatui interactive terminal browser |
 | `nexus-ai` | Optional AI explanations (OpenAI-compatible) |
-| `nexus-api` | Axum API for `serve` (experimental) |
+| `nexus-api` | Axum API for `serve` (experimental, loopback default) |
 | `nexus-cli` | CLI entrypoint |
 
 ## External tools (optional)
@@ -143,7 +144,8 @@ Missing tools are **silently skipped** — they never break the pipeline. See [`
 
 - No web dashboard; no automatic delete/move/archive of repos.
 - Scoring and clustering are heuristics — review `plan` and `report` for high-stakes decisions.
-- `serve` is experimental; do not rely on it as a stable API.
+- `serve` is experimental (loopback-only by default); do not rely on it as a stable API.
+- GitHub ingest caps at 5000 repos per owner; warns on truncation.
 - Core usefulness does **not** depend on AI.
 
 ## Docs

@@ -27,6 +27,9 @@ struct GhBranch {
     name: String,
 }
 
+/// Maximum repos fetched per `gh repo list` call. If we receive this many, results may be truncated.
+const MAX_REPOS: u32 = 5000;
+
 pub fn ensure_gh_installed() -> Result<()> {
     which("gh").context("gh CLI not found in PATH")?;
     Ok(())
@@ -35,13 +38,14 @@ pub fn ensure_gh_installed() -> Result<()> {
 pub fn ingest_owner(owner: &str) -> Result<Vec<RemoteRecord>> {
     ensure_gh_installed()?;
 
+    let limit = MAX_REPOS.to_string();
     let output = Command::new("gh")
         .args([
             "repo",
             "list",
             owner,
             "--limit",
-            "500",
+            limit.as_str(),
             "--json",
             "nameWithOwner,url,isArchived,isFork,isPrivate,pushedAt,defaultBranchRef",
         ])
@@ -58,7 +62,7 @@ pub fn ingest_owner(owner: &str) -> Result<Vec<RemoteRecord>> {
     let rows: Vec<GhRepo> =
         serde_json::from_slice(&output.stdout).context("failed to parse gh repo list JSON")?;
 
-    let remotes = rows
+    let remotes: Vec<RemoteRecord> = rows
         .into_iter()
         .map(|repo| {
             let parts: Vec<&str> = repo.name_with_owner.split('/').collect();
@@ -84,6 +88,15 @@ pub fn ingest_owner(owner: &str) -> Result<Vec<RemoteRecord>> {
             }
         })
         .collect();
+
+    if remotes.len() as u32 >= MAX_REPOS {
+        tracing::warn!(
+            owner = %owner,
+            count = remotes.len(),
+            limit = MAX_REPOS,
+            "GitHub ingest hit repo limit; results may be truncated. Consider filtering with `--github-owner` on subsets."
+        );
+    }
 
     Ok(remotes)
 }

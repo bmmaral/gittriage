@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::Value, Connection};
 use std::fs;
 use std::path::Path;
 
@@ -35,6 +35,14 @@ impl Database {
         let conn = Connection::open(path)
             .with_context(|| format!("failed to open sqlite db {}", path.display()))?;
 
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA busy_timeout=5000;
+             PRAGMA foreign_keys=ON;",
+        )
+        .context("failed to set connection pragmas")?;
+
         let db = Self { conn };
         db.migrate()?;
         Ok(db)
@@ -44,7 +52,46 @@ impl Database {
         self.conn
             .execute_batch(MIGRATION_0001)
             .context("failed to apply migration 0001")?;
+
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS nexus_meta (
+                   key TEXT PRIMARY KEY,
+                   value TEXT NOT NULL
+                 );
+                 INSERT OR IGNORE INTO nexus_meta (key, value) VALUES ('schema_version', '1');",
+            )
+            .context("failed to create nexus_meta table")?;
+
         Ok(())
+    }
+
+    /// Execute a single-column query and return the first row as a `String`.
+    /// Useful for reading PRAGMAs in tests and diagnostics (SQLite may return int or text).
+    pub fn raw_query_row(&self, sql: &str) -> Result<String> {
+        let v: Value = self
+            .conn
+            .query_row(sql, [], |row| row.get(0))
+            .with_context(|| format!("raw_query_row: {sql}"))?;
+        Ok(match v {
+            Value::Null => String::new(),
+            Value::Integer(i) => i.to_string(),
+            Value::Real(f) => f.to_string(),
+            Value::Text(s) => s,
+            Value::Blob(b) => String::from_utf8_lossy(&b).into_owned(),
+        })
+    }
+
+    pub fn schema_version(&self) -> Result<u32> {
+        let v: String = self
+            .conn
+            .query_row(
+                "SELECT value FROM nexus_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| "0".to_string());
+        Ok(v.parse().unwrap_or(0))
     }
 
     /// Returns whether a table from the schema exists (used by tests and diagnostics).
@@ -222,6 +269,9 @@ impl Database {
                     readme_title: row.get(11)?,
                     license_spdx: row.get(12)?,
                     fingerprint: row.get(13)?,
+                    has_lockfile: false,
+                    has_ci: false,
+                    has_tests_dir: false,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

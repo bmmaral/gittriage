@@ -82,7 +82,13 @@ A higher score means "easier to build, reason about, and continue."
 | `no_license` | **−4** | No license file detected |
 | `content_fingerprint` | +4 | Scan fingerprint present |
 
-Planned / adapter-driven signals (docs target): tests, CI, changelog, secret findings, SBOM.
+The scanner also detects **project cues** that feed into evidence and future scoring refinements:
+
+- `has_lockfile` — Cargo.lock, package-lock.json, yarn.lock, poetry.lock, etc.
+- `has_ci` — `.github/workflows`, `.gitlab-ci.yml`, `.circleci`, Jenkinsfile, `.travis.yml`
+- `has_tests_dir` — `tests/`, `test/`, `spec/`, `__tests__/`, `test_suite/`
+
+These are currently scan-time boolean signals available in `CloneRecord`. Adapter-driven signals (secret findings, SBOM, static analysis) come from `--external`.
 
 ## Recoverability — `scores.recoverability` (0–100)
 
