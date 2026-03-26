@@ -10,7 +10,7 @@
 ### Fixes
 
 - macOS x86_64 release artifacts built via cross-compile on `macos-latest` (no flaky `macos-13` runner).
-- Homebrew formula source URL aligned with tagged releases (checksum refreshed per tag in `packaging/homebrew/gittriage.rb`).
+- Homebrew formula source URL aligned with tagged releases; **v0.1.1** tarball SHA-256, AUR `sha256sums`, Scoop `hash`, and Chocolatey `checksum64` match the published GitHub Release assets.
 
 ## v0.1.0 — 2026-03-25
 

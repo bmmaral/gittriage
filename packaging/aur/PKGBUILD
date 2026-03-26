@@ -8,7 +8,7 @@ url='https://github.com/bmmaral/gittriage'
 license=('MIT')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/bmmaral/gittriage/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed')
+sha256sums=('dee91c2c4482c831350bbd15a3144f20ed96ebf0a00e0f7a435974a7a9556ca1')
 
 prepare() {
   cd "$srcdir/gittriage-$pkgver"

@@ -6,7 +6,7 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/bmmaral/gittriage/releases/download/v0.1.1/gittriage-v0.1.1-x86_64-pc-windows-msvc.exe",
-      "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+      "hash": "cfa43c864226ae2136977364cb76c38c964220329a6a8cc4bb5ba3b965556ba7"
     }
   },
   "pre_install": "Get-ChildItem \"$dir\\gittriage-v*.exe\" | Select-Object -First 1 | ForEach-Object { Rename-Item $_.FullName 'gittriage.exe' }",
