@@ -13,6 +13,7 @@ fn persist_plan_empty_succeeds() {
         scoring_rules_version: 5,
         generated_at: Utc::now(),
         generated_by: "test".into(),
+        external_adapter_run: None,
         clusters: vec![],
     };
     db.persist_plan(&plan).expect("persist");

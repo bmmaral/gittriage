@@ -25,6 +25,7 @@ pub struct ScanOptions {
     pub max_hash_files: usize,
     pub scan_mode: ScanMode,
     pub max_depth: Option<usize>,
+    pub include_nested_git: bool,
 }
 
 impl Default for ScanOptions {
@@ -36,8 +37,17 @@ impl Default for ScanOptions {
             max_hash_files: 64,
             scan_mode: ScanMode::default(),
             max_depth: None,
+            include_nested_git: false,
         }
     }
+}
+
+/// Result of [`scan_roots`]: discovered roots plus nested git dirs skipped by default rules.
+#[derive(Debug, Clone)]
+pub struct ScanOutcome {
+    pub clones: Vec<CloneRecord>,
+    /// Nested `.git` directories skipped because they sit under another scanned git root.
+    pub skipped_nested_git: Vec<PathBuf>,
 }
 
 fn load_gittriageignore(root: &Path) -> Vec<glob::Pattern> {
@@ -66,8 +76,9 @@ fn is_gittriageignored(path: &Path, patterns: &[glob::Pattern]) -> bool {
     })
 }
 
-pub fn scan_roots(roots: &[PathBuf], options: &ScanOptions) -> Result<Vec<CloneRecord>> {
+pub fn scan_roots(roots: &[PathBuf], options: &ScanOptions) -> Result<ScanOutcome> {
     let mut repos = Vec::new();
+    let mut skipped_nested_git = Vec::new();
 
     for root in roots {
         let ignore_patterns = load_gittriageignore(root);
@@ -100,9 +111,17 @@ pub fn scan_roots(roots: &[PathBuf], options: &ScanOptions) -> Result<Vec<CloneR
 
             let is_descendant_of_git_root = found_git_roots
                 .iter()
-                .any(|gr| path.starts_with(gr) && path != gr);
+                .any(|gr| path.starts_with(gr) && path != *gr);
             if is_descendant_of_git_root {
-                continue;
+                let nested_git = path.join(".git").exists();
+                if !nested_git {
+                    continue;
+                }
+                if !options.include_nested_git {
+                    skipped_nested_git.push(path.to_path_buf());
+                    continue;
+                }
+                found_git_roots.insert(path.to_path_buf());
             }
 
             if !looks_like_project_root(path, options.scan_mode) {
@@ -119,7 +138,12 @@ pub fn scan_roots(roots: &[PathBuf], options: &ScanOptions) -> Result<Vec<CloneR
 
     repos.sort_by(|a, b| a.path.cmp(&b.path));
     repos.dedup_by(|a, b| a.path == b.path);
-    Ok(repos)
+    skipped_nested_git.sort();
+    skipped_nested_git.dedup();
+    Ok(ScanOutcome {
+        clones: repos,
+        skipped_nested_git,
+    })
 }
 
 fn looks_like_project_root(path: &Path, mode: ScanMode) -> bool {
@@ -200,6 +224,26 @@ fn heading_regex() -> &'static regex::Regex {
     RE.get_or_init(|| regex::Regex::new(r"(?m)^\s*#\s+(.+?)\s*$").unwrap())
 }
 
+fn readme_title_quality_ok(s: &str) -> bool {
+    let t = s.trim();
+    if t.len() < 3 {
+        return false;
+    }
+    let lower = t.to_lowercase();
+    if matches!(
+        lower.as_str(),
+        "or" | "and" | "the" | "a" | "an" | "to" | "of" | "in" | "for" | "is" | "it" | "if"
+    ) {
+        return false;
+    }
+    if t.chars()
+        .all(|c| c.is_ascii_punctuation() || c.is_whitespace())
+    {
+        return false;
+    }
+    true
+}
+
 fn extract_readme_title(path: &Path, max_bytes: usize) -> Result<Option<String>> {
     let candidates = ["README.md", "README", "readme.md"];
     let re = heading_regex();
@@ -216,9 +260,11 @@ fn extract_readme_title(path: &Path, max_bytes: usize) -> Result<Option<String>>
         }
 
         if let Some(caps) = re.captures(&content) {
-            return Ok(Some(caps[1].trim().to_string()));
+            let t = caps[1].trim().to_string();
+            if readme_title_quality_ok(&t) {
+                return Ok(Some(t));
+            }
         }
-        return Ok(Some(file.to_string()));
     }
 
     Ok(None)
@@ -417,7 +463,7 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap();
+        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap().clones;
         let paths: Vec<&str> = results.iter().map(|r| r.path.as_str()).collect();
 
         assert!(
@@ -446,7 +492,7 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap();
+        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap().clones;
         let paths: Vec<&str> = results.iter().map(|r| r.path.as_str()).collect();
 
         assert!(
@@ -477,7 +523,7 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap();
+        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap().clones;
         let paths: Vec<&str> = results.iter().map(|r| r.path.as_str()).collect();
 
         assert!(
@@ -508,8 +554,8 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap();
-        let paths: Vec<&str> = results.iter().map(|r| r.path.as_str()).collect();
+        let outcome = scan_roots(&[root.to_path_buf()], &opts).unwrap();
+        let paths: Vec<&str> = outcome.clones.iter().map(|r| r.path.as_str()).collect();
 
         assert!(
             paths
@@ -520,6 +566,13 @@ mod tests {
         assert!(
             !paths.iter().any(|p| p.contains("sub-pkg")),
             "should NOT descend into git root subdirectories"
+        );
+        assert!(
+            outcome
+                .skipped_nested_git
+                .iter()
+                .any(|p| p.to_string_lossy().contains("sub-pkg")),
+            "nested git roots should be listed as skipped"
         );
     }
 
@@ -540,7 +593,7 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap();
+        let results = scan_roots(&[root.to_path_buf()], &opts).unwrap().clones;
         let paths: Vec<&str> = results.iter().map(|r| r.path.as_str()).collect();
 
         assert!(

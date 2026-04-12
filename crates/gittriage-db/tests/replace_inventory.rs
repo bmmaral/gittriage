@@ -35,6 +35,7 @@ fn replace_inventory_roundtrip() {
         }],
         remotes: vec![],
         links: vec![],
+        ..Default::default()
     };
 
     db.replace_inventory_snapshot(&snap, "test")
@@ -78,6 +79,7 @@ fn replace_inventory_clears_persisted_plan() {
         }],
         remotes: vec![],
         links: vec![],
+        ..Default::default()
     };
     db.replace_inventory_snapshot(&snap, "test").expect("seed");
 
@@ -86,6 +88,7 @@ fn replace_inventory_clears_persisted_plan() {
         scoring_rules_version: 5,
         generated_at: Utc::now(),
         generated_by: "test".into(),
+        external_adapter_run: None,
         clusters: vec![ClusterPlan {
             cluster: ClusterRecord {
                 id: "cl-1".into(),

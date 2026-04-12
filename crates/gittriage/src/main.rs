@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use gittriage_config::ConfigBundle;
-use gittriage_core::{CloneRemoteLink, InventorySnapshot, RunRecord};
+use gittriage_core::{CloneRemoteLink, ClusterScopeFilter, InventorySnapshot, RunRecord};
 use gittriage_db::Database;
 use std::collections::HashSet;
 use std::fs;
@@ -41,6 +41,9 @@ enum Commands {
         /// GitHub user or org to ingest (requires `gh` on PATH).
         #[arg(long)]
         github_owner: Option<String>,
+        /// Override `github_owner_mode` for this run (`augment` = only repos matching local remotes).
+        #[arg(long, value_enum)]
+        github_owner_mode: Option<GitHubOwnerModeCli>,
     },
     /// Compute cluster scores and evidence from the current inventory.
     Score {
@@ -73,6 +76,8 @@ enum Commands {
         profile: Option<String>,
     },
     /// Render a human-readable report (Markdown or JSON) from inventory.
+    ///
+    /// The plan body is always recomputed from the current inventory (same engine as `plan` / `score`), not read from the last `plan --write` file. The markdown header still compares timing against any SQLite-persisted plan rows.
     Report {
         /// Output format.
         #[arg(long, default_value = "md")]
@@ -80,6 +85,15 @@ enum Commands {
         /// Scoring profile: default, publish, open_source, security, ai_handoff.
         #[arg(long)]
         profile: Option<String>,
+        /// Only include clusters with this member scope (Markdown header still summarizes full counts when set).
+        #[arg(long, value_enum)]
+        scope: Option<ReportScopeCli>,
+        /// After rendering, persist the freshly built plan to SQLite (like `gittriage plan` without writing JSON).
+        #[arg(long)]
+        persist_plan: bool,
+        /// No-op: documents that report always recomputes from inventory (for scripts and CI).
+        #[arg(long, hide = true)]
+        recompute: bool,
     },
     /// Check environment, config, database, and tool availability.
     Doctor {
@@ -87,9 +101,15 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: DoctorFormat,
     },
-    /// Preview proposed actions without applying them (v1 is read-only).
+    /// Preview-only: summarize clusters and proposed actions. v1 has no mutating apply — omitting `--dry-run` exits with an error on purpose.
+    #[command(
+        visible_alias = "preview",
+        long_about = "Preview proposed plan actions without mutating any repository.\n\n\
+v1 does not implement a mutating apply path; use `gittriage plan --write` and follow actions manually, or consume JSON from `export` / `serve`. \
+A future release may add guarded filesystem or git operations behind explicit opt-in flags."
+    )]
     Apply {
-        /// Required in v1 — mutating apply is not yet implemented.
+        /// Required in v1 — there is no mutating apply yet; this flag selects the preview path.
         #[arg(long)]
         dry_run: bool,
         /// Output format.
@@ -143,6 +163,9 @@ enum Commands {
         /// Run optional external scanners.
         #[arg(long)]
         external: bool,
+        /// Only list clusters in this member-scope bucket (local-only, mixed, remote-only).
+        #[arg(long, value_enum)]
+        scope: Option<ReportScopeCli>,
     },
     /// Deep-dive into one cluster: scores, evidence, actions.
     Explain {
@@ -156,7 +179,7 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: explain::ExplainFormat,
         /// Append an AI-generated narrative (requires ai.enabled + API key).
-        #[arg(long)]
+        #[arg(long, global = true)]
         ai: bool,
         /// Scoring profile: default, publish, open_source, security, ai_handoff.
         #[arg(long)]
@@ -173,6 +196,12 @@ enum Commands {
         #[arg(long)]
         external: bool,
     },
+    /// Check AI settings: enabled flag, API key presence, optional API reachability.
+    AiDoctor {
+        /// GET the configured OpenAI-compatible `…/models` URL (short timeout).
+        #[arg(long)]
+        probe_network: bool,
+    },
     /// Generate shell completions for bash, zsh, fish, elvish, or powershell.
     Completions {
         /// Shell to generate completions for.
@@ -181,10 +210,42 @@ enum Commands {
     },
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum GitHubOwnerModeCli {
+    Augment,
+    FullCatalog,
+}
+
+impl From<GitHubOwnerModeCli> for gittriage_config::GitHubOwnerMode {
+    fn from(v: GitHubOwnerModeCli) -> Self {
+        match v {
+            GitHubOwnerModeCli::Augment => Self::Augment,
+            GitHubOwnerModeCli::FullCatalog => Self::FullCatalog,
+        }
+    }
+}
+
 #[derive(Debug, Clone, ValueEnum)]
 enum ReportFormat {
     Md,
     Json,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ReportScopeCli {
+    LocalOnly,
+    Mixed,
+    RemoteOnly,
+}
+
+impl From<ReportScopeCli> for ClusterScopeFilter {
+    fn from(v: ReportScopeCli) -> Self {
+        match v {
+            ReportScopeCli::LocalOnly => ClusterScopeFilter::LocalOnly,
+            ReportScopeCli::Mixed => ClusterScopeFilter::Mixed,
+            ReportScopeCli::RemoteOnly => ClusterScopeFilter::RemoteOnly,
+        }
+    }
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -275,7 +336,8 @@ fn main() -> Result<()> {
         Commands::Scan {
             roots,
             github_owner,
-        } => cmd_scan(&mut db, &bundle, roots, github_owner),
+            github_owner_mode,
+        } => cmd_scan(&mut db, &bundle, roots, github_owner, github_owner_mode),
         Commands::Score {
             format,
             no_merge_base,
@@ -288,7 +350,21 @@ fn main() -> Result<()> {
             external,
             profile,
         } => cmd_plan(&mut db, &bundle, &write, no_merge_base, external, profile),
-        Commands::Report { format, profile } => cmd_report(&db, &bundle, format, profile),
+        Commands::Report {
+            format,
+            profile,
+            scope,
+            persist_plan,
+            recompute,
+        } => cmd_report(
+            &mut db,
+            &bundle,
+            format,
+            profile,
+            scope,
+            persist_plan,
+            recompute,
+        ),
         Commands::Doctor { format } => cmd_doctor(&bundle, format),
         Commands::Apply { dry_run, format } => cmd_apply(&db, &bundle, dry_run, format),
         Commands::Serve { port, listen } => {
@@ -315,7 +391,8 @@ fn main() -> Result<()> {
         Commands::Tui {
             no_merge_base,
             external,
-        } => cmd_tui(&db, &bundle, no_merge_base, external),
+            scope,
+        } => cmd_tui(&db, &bundle, no_merge_base, external, scope),
         Commands::Explain {
             no_merge_base,
             external,
@@ -337,6 +414,7 @@ fn main() -> Result<()> {
             no_merge_base,
             external,
         } => cmd_ai_summary(&db, &bundle, no_merge_base, external),
+        Commands::AiDoctor { probe_network } => cmd_ai_doctor(&bundle, probe_network),
         Commands::Completions { shell } => {
             clap_complete::generate(
                 shell,
@@ -354,6 +432,7 @@ fn cmd_scan(
     bundle: &ConfigBundle,
     roots: Vec<PathBuf>,
     github_owner: Option<String>,
+    github_owner_mode_cli: Option<GitHubOwnerModeCli>,
 ) -> Result<()> {
     let t0 = std::time::Instant::now();
     let config = &bundle.config;
@@ -373,7 +452,11 @@ fn cmd_scan(
     };
 
     let t_scan = std::time::Instant::now();
-    let mut clones = gittriage_scan::scan_roots(
+    let owner_mode = github_owner_mode_cli
+        .map(Into::into)
+        .unwrap_or(bundle.config.github_owner_mode);
+
+    let scan_outcome = gittriage_scan::scan_roots(
         &resolved_roots,
         &gittriage_scan::ScanOptions {
             respect_gitignore: config.scan.respect_gitignore,
@@ -382,8 +465,10 @@ fn cmd_scan(
             max_hash_files: config.scan.max_hash_files,
             scan_mode,
             max_depth: config.scan.max_depth,
+            include_nested_git: config.scan.include_nested_git,
         },
     )?;
+    let mut clones = scan_outcome.clones;
     let scan_ms = t_scan.elapsed().as_millis();
 
     let t_enrich = std::time::Instant::now();
@@ -423,10 +508,20 @@ fn cmd_scan(
 
     let gh_owner = github_owner.clone().or_else(|| config.github_owner.clone());
     let t_gh = std::time::Instant::now();
-    let github_remotes: Vec<gittriage_core::RemoteRecord> = match &gh_owner {
+    let mut github_remotes: Vec<gittriage_core::RemoteRecord> = match &gh_owner {
         Some(owner) => gittriage_github::ingest_owner(owner).unwrap_or_default(),
         None => vec![],
     };
+
+    if gh_owner.is_some() && owner_mode == gittriage_config::GitHubOwnerMode::Augment {
+        let local_urls: std::collections::HashSet<String> = remotes
+            .iter()
+            .filter(|r| r.provider == "local-git")
+            .map(|r| r.normalized_url.clone())
+            .collect();
+        github_remotes.retain(|r| local_urls.contains(&r.normalized_url));
+    }
+
     let gh_ms = t_gh.elapsed().as_millis();
     let n_github = github_remotes.len();
 
@@ -458,6 +553,11 @@ fn cmd_scan(
     }
     links.extend(extra_links);
 
+    let skipped_nested: Vec<String> = scan_outcome
+        .skipped_nested_git
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
     let run = RunRecord {
         id: format!("run-{}", uuid::Uuid::new_v4()),
         started_at: chrono::Utc::now(),
@@ -468,9 +568,18 @@ fn cmd_scan(
             .collect(),
         github_owner: gh_owner.clone(),
         version: env!("CARGO_PKG_VERSION").into(),
+        stats: if skipped_nested.is_empty() {
+            None
+        } else {
+            Some(gittriage_core::RunScanStats {
+                skipped_nested_git: skipped_nested,
+            })
+        },
     };
 
     let t_db = std::time::Instant::now();
+    db.prepare_for_scan_persist()
+        .context("prepare database for scan (clear prior inventory + plan)")?;
     db.save_run(&run)?;
     db.save_clones(&run.id, &clones)?;
     db.save_remotes(&remotes)?;
@@ -482,11 +591,19 @@ fn cmd_scan(
 
     println!("scan complete ({:.1}s)", t0.elapsed().as_secs_f64());
     println!();
-    println!(
-        "  clones         {:>5}  ({} git repos)",
-        clones.len(),
-        n_git
-    );
+    if matches!(
+        config.scan.scan_mode,
+        gittriage_config::ScanMode::ProjectRoots
+    ) {
+        println!(
+            "  project roots  {:>5}  ({} git checkouts, {} manifest-only)",
+            clones.len(),
+            n_git,
+            clones.len().saturating_sub(n_git)
+        );
+    } else {
+        println!("  git checkouts  {:>5}  (scan_mode git_only)", clones.len());
+    }
     println!(
         "  remotes        {:>5}  ({} local-git, {} github)",
         remotes.len(),
@@ -496,6 +613,15 @@ fn cmd_scan(
     println!("  links          {:>5}", links.len());
     if total_size > 0 {
         println!("  total size     {:>5}", format_bytes(total_size));
+    }
+    if !scan_outcome.skipped_nested_git.is_empty() {
+        eprintln!();
+        eprintln!(
+            "  warning: skipped nested git repos under another root (set scan.include_nested_git = true to scan them):"
+        );
+        for p in &scan_outcome.skipped_nested_git {
+            eprintln!("    - {}", p.display());
+        }
     }
     println!();
     println!("  scan     {:>6}ms", scan_ms);
@@ -567,7 +693,8 @@ fn cmd_import(db: &mut Database, path: &Path, force: bool) -> Result<()> {
         "import replaces all inventory and clears the persisted plan; pass `--force` to confirm"
     );
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let snapshot = parse_inventory_import(&bytes)?;
+    let mut snapshot = parse_inventory_import(&bytes)?;
+    snapshot.refresh_semantics();
     db.replace_inventory_snapshot(&snapshot, env!("CARGO_PKG_VERSION"))
         .context("replace inventory")?;
     println!(
@@ -600,9 +727,21 @@ fn cmd_explain(
     if external {
         gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
     }
-    explain::run_explain(&snapshot, &plan, target, format)?;
+    explain::run_explain(&snapshot, &plan, &target, format)?;
 
     if ai {
+        if !bundle.config.ai.enabled {
+            eprintln!(
+                "Note: skipped AI narrative (ai.enabled is false in config). Deterministic output above is complete."
+            );
+            return Ok(());
+        }
+        if gittriage_ai::resolve_api_key().is_none() {
+            eprintln!(
+                "Note: skipped AI narrative (set GITTRIAGE_AI_API_KEY or OPENAI_API_KEY). Deterministic output above is complete."
+            );
+            return Ok(());
+        }
         let ai_cfg = gittriage_ai::AiConfig {
             enabled: bundle.config.ai.enabled,
             api_base: bundle.config.ai.api_base.clone(),
@@ -610,10 +749,7 @@ fn cmd_explain(
             max_tokens: bundle.config.ai.max_tokens,
             temperature: bundle.config.ai.temperature,
         };
-        let cp = plan
-            .clusters
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("no clusters in plan"))?;
+        let cp = explain::cluster_plan_for_target(&plan, &target)?;
         let rt = tokio::runtime::Runtime::new()?;
         let narrative = rt.block_on(gittriage_ai::explain_cluster(&ai_cfg, cp))?;
         println!("\n── AI explanation (model-generated, not deterministic) ──\n");
@@ -628,6 +764,15 @@ fn cmd_ai_summary(
     no_merge_base: bool,
     external: bool,
 ) -> Result<()> {
+    if !bundle.config.ai.enabled {
+        eprintln!("Note: skipped AI plan summary (ai.enabled is false in config).");
+        return Ok(());
+    }
+    if gittriage_ai::resolve_api_key().is_none() {
+        eprintln!("Note: skipped AI plan summary (no GITTRIAGE_AI_API_KEY / OPENAI_API_KEY).");
+        return Ok(());
+    }
+
     let ai_cfg = gittriage_ai::AiConfig {
         enabled: bundle.config.ai.enabled,
         api_base: bundle.config.ai.api_base.clone(),
@@ -635,7 +780,6 @@ fn cmd_ai_summary(
         max_tokens: bundle.config.ai.max_tokens,
         temperature: bundle.config.ai.temperature,
     };
-    ai_cfg.validate()?;
 
     let snapshot = db.load_inventory()?;
     let opts = plan_build_opts(bundle, !no_merge_base);
@@ -648,6 +792,61 @@ fn cmd_ai_summary(
     let summary = rt.block_on(gittriage_ai::summarize_plan(&ai_cfg, &plan))?;
     println!("── AI plan summary (model-generated, not deterministic) ──\n");
     println!("{summary}");
+    Ok(())
+}
+
+fn cmd_ai_doctor(bundle: &ConfigBundle, probe_network: bool) -> Result<()> {
+    println!("AI configuration (gittriage ai-doctor)");
+    println!();
+    println!("  ai.enabled: {}", bundle.config.ai.enabled);
+    println!(
+        "  API key: {}",
+        if gittriage_ai::resolve_api_key().is_some() {
+            "set (GITTRIAGE_AI_API_KEY or OPENAI_API_KEY)"
+        } else {
+            "missing"
+        }
+    );
+    println!("  api_base: {}", bundle.config.ai.api_base);
+    println!("  model: {}", bundle.config.ai.model);
+    println!();
+    if probe_network {
+        if !bundle.config.ai.enabled {
+            println!("  network probe: skipped (ai.enabled is false)");
+        } else {
+            let base = bundle.config.ai.api_base.trim_end_matches('/');
+            let url = format!("{base}/models");
+            println!("  network probe: GET {url}");
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .context("build HTTP client for ai-doctor")?;
+            let mut req = client.get(&url);
+            if let Some(ref k) = gittriage_ai::resolve_api_key() {
+                req = req.bearer_auth(k);
+            }
+            match req.send() {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        println!("  network probe: OK ({status})");
+                    } else {
+                        println!(
+                            "  network probe: reachable but error status {status} (check api_base, model, and auth)"
+                        );
+                    }
+                }
+                Err(e) => println!("  network probe: FAILED ({e:#})"),
+            }
+        }
+    } else {
+        println!(
+            "  (pass `--probe-network` for a short GET to `{}/models`)",
+            bundle.config.ai.api_base.trim_end_matches('/')
+        );
+    }
+    println!();
+    println!("Use `gittriage explain --ai …` or `gittriage ai-summary` after enabling AI and setting a key.");
     Ok(())
 }
 
@@ -760,6 +959,26 @@ fn cmd_plan(
     let mut plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
     if external {
         gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+        let probes = gittriage_adapters::probe_all();
+        let on_path = probes.iter().filter(|(_, ok)| *ok).count();
+        let ev_rows = gittriage_adapters::count_adapter_evidence(&plan);
+        println!(
+            "  external   {:>5} / {} tools on PATH; {} adapter evidence rows",
+            on_path,
+            probes.len(),
+            ev_rows
+        );
+        if let Some(ref meta) = plan.external_adapter_run {
+            println!(
+                "  adapter_run tools_on_path={} canonical_roots={} spawn_attempts={} evidence_attached={} skipped_not_dir={} timeout_or_nonzero_exit={}",
+                meta.tools_on_path,
+                meta.canonical_clone_roots_considered,
+                meta.tool_spawn_attempts,
+                meta.evidence_items_attached,
+                meta.skipped_clone_path_not_directory,
+                meta.runs_timeout_or_nonzero_exit
+            );
+        }
     }
     db.persist_plan(&plan)?;
     let json = serde_json::to_string_pretty(&plan)?;
@@ -793,25 +1012,61 @@ fn cmd_plan(
 }
 
 fn cmd_report(
-    db: &Database,
+    db: &mut Database,
     bundle: &ConfigBundle,
     format: ReportFormat,
     profile: Option<String>,
+    scope: Option<ReportScopeCli>,
+    persist_plan: bool,
+    recompute: bool,
 ) -> Result<()> {
+    if recompute {
+        eprintln!(
+            "note: `gittriage report` always recomputes the plan from the current inventory; the markdown header compares timing against any SQLite-persisted snapshot."
+        );
+    }
     let snapshot: InventorySnapshot = db.load_inventory()?;
     let mut local_bundle = bundle.clone();
     if let Some(ref p) = profile {
         local_bundle.config.planner.scoring_profile = Some(p.clone());
     }
     let opts = plan_build_opts(&local_bundle, true);
-    let plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    let full_plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    if persist_plan {
+        db.persist_plan(&full_plan)
+            .context("persist plan from `gittriage report --persist-plan`")?;
+    }
+    let (n_persist, persist_at) = db.persisted_plan_cluster_stats()?;
+    let scope_filter = scope.map(Into::into);
+    let display_plan = gittriage_report::filter_plan_by_scope(&full_plan, scope_filter);
+    let (l, m, r, e) = gittriage_report::scope_breakdown(&full_plan);
+    let skipped_nested = snapshot
+        .run
+        .as_ref()
+        .and_then(|run| run.stats.as_ref())
+        .map(|s| s.skipped_nested_git.clone())
+        .unwrap_or_default();
     match format {
         ReportFormat::Md => {
-            let md = gittriage_report::render_markdown(&plan)?;
+            let md = gittriage_report::render_markdown_with(
+                &display_plan,
+                gittriage_report::ReportExtras {
+                    scope_filter,
+                    unfiltered_cluster_count: scope_filter.map(|_| full_plan.clusters.len()),
+                    local_only_count: l,
+                    mixed_count: m,
+                    remote_only_count: r,
+                    empty_count: e,
+                    prefer_local_involved_sections: scope_filter.is_none(),
+                    latest_scan_started_at: snapshot.run.as_ref().map(|r| r.started_at),
+                    sqlite_persisted: Some((n_persist, persist_at)),
+                    skipped_nested_git_paths: skipped_nested,
+                },
+            )?;
             println!("{md}");
         }
         ReportFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&plan)?);
+            println!("{}", serde_json::to_string_pretty(&display_plan)?);
         }
     }
     Ok(())
@@ -822,6 +1077,7 @@ fn cmd_tui(
     bundle: &ConfigBundle,
     no_merge_base: bool,
     external: bool,
+    scope: Option<ReportScopeCli>,
 ) -> Result<()> {
     let snapshot = db.load_inventory()?;
     let opts = plan_build_opts(bundle, !no_merge_base);
@@ -836,7 +1092,25 @@ fn cmd_tui(
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    gittriage_tui::run(plan, gittriage_tui::TuiConfig { config_pins })
+    let export_path = bundle.config.tui_export_path.clone().unwrap_or_else(|| {
+        let ts = Utc::now().format("%Y%m%dT%H%M%SZ");
+        PathBuf::from(format!("gittriage-plan-tui-export-{ts}.json"))
+    });
+    let skipped_nested = snapshot
+        .run
+        .as_ref()
+        .and_then(|run| run.stats.as_ref())
+        .map(|s| s.skipped_nested_git.clone())
+        .unwrap_or_default();
+    gittriage_tui::run(
+        plan,
+        gittriage_tui::TuiConfig {
+            config_pins,
+            export_path,
+            scope_filter: scope.map(Into::into),
+            skipped_nested_git_paths: skipped_nested,
+        },
+    )
 }
 
 fn cmd_tools(format: ToolsFormat) -> Result<()> {

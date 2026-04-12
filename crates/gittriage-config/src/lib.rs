@@ -26,6 +26,8 @@ pub struct ScanConfig {
     pub max_hash_files: usize,
     pub scan_mode: ScanMode,
     pub max_depth: Option<usize>,
+    /// Discover `.git` directories nested inside another scanned git root (off by default).
+    pub include_nested_git: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,16 +71,32 @@ impl Default for AiConfig {
     }
 }
 
+/// How `github_owner` / `--github-owner` combines with a local scan.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubOwnerMode {
+    /// Only keep GitHub repos whose normalized URL matches a local-git remote from this scan.
+    #[default]
+    Augment,
+    /// Ingest the full `gh repo list` catalog (can add many remote-only clusters).
+    FullCatalog,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GitTriageConfig {
     pub db_path: PathBuf,
     pub default_roots: Vec<String>,
     pub github_owner: Option<String>,
+    /// `augment` (default): GitHub ingest is filtered to URLs already seen from local clones.
+    /// `full_catalog`: full `gh repo list` for the owner (legacy / portfolio mode).
+    pub github_owner_mode: GitHubOwnerMode,
     pub include_hidden: bool,
     pub scan: ScanConfig,
     pub planner: PlannerConfig,
     pub ai: AiConfig,
+    /// When set, `gittriage tui` `o` export writes here; otherwise a timestamped file in cwd.
+    pub tui_export_path: Option<PathBuf>,
 }
 
 impl Default for ScanConfig {
@@ -89,6 +107,7 @@ impl Default for ScanConfig {
             max_hash_files: 64,
             scan_mode: ScanMode::default(),
             max_depth: None,
+            include_nested_git: false,
         }
     }
 }
@@ -114,10 +133,12 @@ impl Default for GitTriageConfig {
             db_path: PathBuf::from(".gittriage/state.db"),
             default_roots: vec!["~/Projects".into()],
             github_owner: None,
+            github_owner_mode: GitHubOwnerMode::default(),
             include_hidden: false,
             scan: ScanConfig::default(),
             planner: PlannerConfig::default(),
             ai: AiConfig::default(),
+            tui_export_path: None,
         }
     }
 }

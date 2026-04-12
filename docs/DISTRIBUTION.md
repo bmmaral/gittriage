@@ -2,6 +2,22 @@
 
 GitTriage ships **prebuilt binaries** on [GitHub Releases](https://github.com/bmmaral/gittriage/releases) (Linux musl x86_64, macOS arm64/x86_64, Windows x86_64) plus `.sha256` sidecars. You can also **build from source** with Rust.
 
+## Which channel should I use?
+
+```text
+Need GitTriage on PATH quickly?
+├─ Prefer a prebuilt binary → GitHub Releases (download + verify `.sha256`)
+├─ Use a package manager you already trust
+│  ├─ macOS / Linux with Homebrew → in-repo formula (`packaging/homebrew/`) or your tap
+│  ├─ Arch → AUR PKGBUILD reference (`packaging/aur/`)
+│  ├─ Nix → `nix run .#gittriage` / `nix build` from this flake
+│  ├─ Windows Scoop / Chocolatey → manifests under `packaging/scoop/` and `packaging/chocolatey/`
+│  └─ Node/npm user → `@bmmaral/gittriage` on GitHub Packages (`packaging/npm/`); unscoped `gittriage` on public npmjs remains a future maintainer action if the name is reserved
+└─ You ship Rust toolchains → `cargo install --path crates/gittriage` or `--git … --tag vX.Y.Z`
+```
+
+After each release, maintainers can sanity-check asset filenames against a tag with [`packaging/verify-release-assets.sh`](../packaging/verify-release-assets.sh) (optional; requires `curl`/`grep`).
+
 ## Cargo (from crates.io)
 
 When published:

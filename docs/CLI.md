@@ -15,6 +15,7 @@ These commands are the **stable surface** for repo fleet triage (names and prima
 | `export` | JSON envelope with `inventory` (optional `--with-plan`) for backup or transfer |
 | `import` | Replace DB inventory from export JSON (clears persisted plan); requires `--force` |
 | `explain` | One cluster’s scores, evidence, and actions (by cluster query or clone/remote id); optional `--ai` narrative |
+| `ai-doctor` | Print AI config status; optional `--probe-network` to GET `{api_base}/models` |
 
 **Secondary (shipped, real)**
 
@@ -27,7 +28,7 @@ These commands are the **stable surface** for repo fleet triage (names and prima
 | Command | Purpose |
 | --- | --- |
 | `ai-summary` | AI-generated executive summary of the full plan (requires `ai.enabled = true` + API key) |
-| `apply --dry-run` | Read-only preview: counts clusters and proposed actions (`--format json` supported). Mutating apply is not implemented. |
+| `apply --dry-run` / `preview` | Read-only preview: counts clusters and proposed actions (`--format json` supported). Mutating apply is not implemented. |
 | `serve` | Read-only JSON over local SQLite for scripting. Not a dashboard, not multi-user, unstable API until release notes say otherwise. |
 
 New subcommands may be added alongside the core without removing these in v1.x.
@@ -46,7 +47,11 @@ Precedence (first match wins):
 
 Relative `db_path` values are resolved against the **config file's parent directory** when a config file is found, or the current working directory when using built-in defaults. Tilde (`~`) is expanded. See `gittriage.toml.example`.
 
-The **`[scan]`** table controls scanning behavior: `scan_mode` (`git_only` default, `project_roots`), `max_depth` (optional traversal limit), `respect_gitignore`, `max_readme_bytes`, and `max_hash_files`. Place a `.gittriageignore` file in any scan root with glob patterns to exclude directories.
+The **`[scan]`** table controls scanning behavior: `scan_mode` (`git_only` default, `project_roots`), `max_depth` (optional traversal limit), `respect_gitignore`, `max_readme_bytes`, `max_hash_files`, and `include_nested_git` (discover nested `.git` dirs under an already-found root; off by default). Place a `.gittriageignore` file in any scan root with glob patterns to exclude directories.
+
+Top-level **`github_owner_mode`** (`augment` default, `full_catalog`) controls how `github_owner` ingest combines with local remotes: `augment` keeps only GitHub repos whose URL matches a local-git remote from the scan; `full_catalog` ingests the full `gh repo list` for the owner. Override per run with `gittriage scan --github-owner-mode …`.
+
+Optional **`tui_export_path`** sets the file written when pressing `o` in the TUI; if unset, a timestamped `gittriage-plan-tui-export-*.json` in the current directory is used.
 
 The **`[planner]`** table drives planning: ambiguity cutoff (`ambiguous_cluster_threshold`), when to suggest archiving duplicates vs canonical strength (`archive_duplicate_threshold`), publish-hygiene actions vs `oss_readiness` (`oss_candidate_threshold`), optional **`canonical_pins`** (clone ids), **`ignored_cluster_keys`** / **`archive_hint_cluster_keys`** (exact `cluster_key` from JSON output), and optional **`scoring_profile`** (`docs/SCORING_PROFILES.md`). The `--profile` flag on `score`, `plan`, `report`, and `explain` overrides the config value. `serve` loads config once at startup.
 
@@ -60,7 +65,10 @@ Example:
 
 ```bash
 gittriage scan ~/Projects ~/code --github-owner your-github-login
+gittriage scan ~/Projects --github-owner your-github-login --github-owner-mode full_catalog
 ```
+
+Nested `.git` directories under another root are skipped by default; stderr lists them. Set `scan.include_nested_git = true` (or use a future release’s warnings-only mode) to include them.
 
 ### `gittriage score`
 
@@ -84,7 +92,7 @@ gittriage score --format json --no-merge-base
 Resolve clusters, score them, optionally attach external evidence, write a deterministic plan file, and **persist** the plan to SQLite (for `serve` and future consumers). Plan JSON includes `scoring_rules_version` (rule-set revision; see `docs/SCORING.md`).
 
 - `--no-merge-base` — skip pairwise `git merge-base` evidence between git clones in the same cluster.
-- `--external` — optional scanners on canonical clones (see above).
+- `--external` — optional scanners on canonical clones (see above). After attach, prints how many adapter tools are on `PATH`, how many adapter evidence rows were added, and a one-line `adapter_run …` summary (`tools_on_path`, spawn attempts, evidence attached, skipped paths, timeouts/non-zero exits). Plan JSON gains optional `external_adapter_run` with the same counters for export and persistence.
 - `--profile <NAME>` — override `planner.scoring_profile` from config.
 
 Example:
@@ -96,15 +104,23 @@ gittriage plan --write plan.json --external
 
 ### `gittriage report`
 
-Render markdown or JSON reports from the current inventory (plan is rebuilt in memory; does not require a prior `plan --write`).
+Render markdown or JSON reports from the current inventory. The plan is **always** recomputed in memory from the current inventory (same engine as `plan` / `score`); it does not read the last `plan --write` file. The markdown header still compares timing against any **SQLite-persisted** plan rows (which `scan` clears).
 
-**Stable markdown sections (in order):** top-level title `GitTriage Report`, run metadata bullets, optional `## Warnings` (ambiguous / low-confidence clusters), then per cluster: `## {label}`, cluster metadata bullets, `### Scores`, `### Score explanations`, `### Evidence`, `### Actions`. Tools that parse reports should key off these headings.
+- `--scope <SCOPE>` — optional filter: `local-only` (clone members only, no remote row in cluster), `mixed` (clone + remote members), `remote-only` (GitHub/catalog-only rows). The markdown header still lists **full** scope counts across the whole plan; the body lists only matching clusters. JSON output is the filtered plan document.
+- `--persist-plan` — after building the report plan, write it to SQLite (same as `gittriage plan` persistence, without writing a JSON file). Use this to refresh DB-backed consumers after a scan without running `plan` separately.
+- Hidden `--recompute` — no-op; prints a one-line note to stderr that the report always recomputes (for explicit scripts).
+- Markdown header also includes: **Local triage focus** (how many clusters involve a local checkout), latest inventory scan time (when present), SQLite persisted-plan row count / timestamp (and a note when `scan` cleared rows or the persisted plan predates the latest scan), and optional `## Skipped nested git repositories` from the last scan’s `runs.stats_json`.
+- When there is no scope filter and the plan mixes local-involved clusters with remote-only clusters, markdown may split body sections into **Clusters with local checkouts** and **Remote-only clusters**.
+
+**Stable markdown sections (in order):** top-level title `GitTriage Report`, run metadata bullets, optional `## Skipped nested git repositories`, optional `## Warnings` (ambiguous / low-confidence clusters), then per cluster: `## {label}`, cluster metadata bullets (including **Member scope**), `### Scores`, `### Score explanations`, `### Evidence`, `### Actions`. Tools that parse reports should key off these headings.
 
 Example:
 
 ```bash
 gittriage report --format md
 gittriage report --format json
+gittriage report --format md --scope remote-only
+gittriage report --format md --persist-plan
 ```
 
 ### `gittriage doctor`
@@ -121,9 +137,9 @@ gittriage doctor
 gittriage doctor --format json
 ```
 
-### `gittriage apply --dry-run`
+### `gittriage apply --dry-run` (alias: `gittriage preview`)
 
-Lists how many clusters/actions would be considered. v1 does not mutate repos; omitting `--dry-run` exits with an error.
+Lists how many clusters/actions would be considered. v1 does not mutate repos; omitting `--dry-run` exits with an error. There is no mutating apply path yet; future releases may add explicit opt-in automation.
 
 - `--format text` (default) — one-line summary.
 - `--format json` — `kind: "gittriage_apply_dry_run"` with `cluster_count`, `action_count`, and `scoring_rules_version` (only with `--dry-run`).
@@ -132,18 +148,23 @@ Example:
 
 ```bash
 gittriage apply --dry-run
+gittriage preview --dry-run
 gittriage apply --dry-run --format json
 ```
 
 ### `gittriage serve` (experimental)
 
-Read-only HTTP JSON API (requires a configured/openable SQLite DB). Intended for **local** inspection only; not a web product. Treat URLs and JSON shapes as **unstable** until promoted in release notes. Config is loaded once at startup (not per-request).
+Read-only HTTP JSON API (requires a configured/openable SQLite DB). Intended for **local** inspection only; not a web product. Config is loaded once at startup (not per-request).
+
+**Stability:** treat this API as **experimental**. Within a given **minor** release (e.g. `0.1.x`), route paths and the top-level JSON keys exercised by the in-repo contract tests (`gittriage-api` integration tests for `/health`, `/v1/inventory`, `/v1/plan`) are intended to remain compatible; field additions inside JSON objects are allowed. Breaking path or top-level shape changes will be called out in release notes when the API is promoted beyond experimental.
 
 - `--port <PORT>` — listen port (default: 3030).
 - `--listen <IP>` — bind address (default: `127.0.0.1`; use `0.0.0.0` for network access).
-- `GET /health`
-- `GET /v1/plan` — current plan JSON (recomputed from inventory using startup config)
-- `GET /v1/inventory` — clone / remote / link counts
+Routes (all `GET`, JSON bodies):
+
+- `/health` — `{"ok": true, "service": "gittriage-api", "version": "<crate semver>"}` (service liveness).
+- `/v1/inventory` — `{"clones": N, "remotes": N, "links": N}` (lightweight counts).
+- `/v1/plan` — full plan document (recomputed from inventory using startup config; same shape as `plan --write`, including optional `external_adapter_run` when last built with adapters).
 
 Example:
 
@@ -169,7 +190,7 @@ gittriage tools --format json
 Writes JSON to stdout or `-o`/`--output`:
 
 - `schema_version`, `kind: "gittriage_inventory_export_v1"`, `exported_at`, `generated_by`
-- `inventory` — same shape as the in-memory snapshot (`clones`, `remotes`, `links`, and `run` when a row exists in SQLite — latest scan by `started_at`)
+- `inventory` — same shape as the in-memory snapshot (`clones`, `remotes`, `links`, optional `semantics` documenting git vs manifest-only root counts, and `run` when a row exists in SQLite — latest scan by `started_at`)
 - optional `plan` when `--with-plan` — fresh plan (same flags as `plan` for merge-base and external scanners; not written to disk or persisted)
 
 ```bash
@@ -189,27 +210,40 @@ gittriage import backup.json --force
 
 Subcommands: `cluster <ID_OR_LABEL>`, `clone <CLONE_ID>`, `remote <REMOTE_ID>`. Resolves a cluster (exact id, case-insensitive label, or unique substring for `cluster`), then prints text or `--format json`. Uses the same `--no-merge-base` and `--external` switches as `score`/`plan`.
 
-- `--ai` — Append an AI-generated narrative explanation after the deterministic output. Requires `ai.enabled = true` in `gittriage.toml` and `GITTRIAGE_AI_API_KEY` or `OPENAI_API_KEY`. The AI output is clearly labeled as model-generated.
+- `--ai` — Append an AI-generated narrative after the deterministic block. Flag is **global** on `explain` (valid as `gittriage explain --ai cluster foo` or `gittriage explain cluster foo --ai`). If AI is disabled or no API key is set, a short **note** is printed to stderr and the command still **exits 0** after the deterministic output.
 - `--profile <NAME>` — override `planner.scoring_profile` from config.
 
 ```bash
 gittriage explain cluster my-repo
 gittriage explain clone clone-abc --format json
+gittriage explain --ai cluster my-repo
 gittriage explain cluster my-repo --ai
 ```
 
 ### `gittriage ai-summary`
 
-Generate an AI-powered executive summary of the full plan. Requires `ai.enabled = true` in `gittriage.toml` and an API key (`GITTRIAGE_AI_API_KEY` or `OPENAI_API_KEY`). The output is clearly labeled as model-generated and never modifies deterministic scores or actions.
+Generate an AI-powered executive summary of the full plan. When `ai.enabled` is false or no API key is set, prints a one-line note to stderr and **exits 0** (no summary). Otherwise requires `ai.enabled = true` and `GITTRIAGE_AI_API_KEY` or `OPENAI_API_KEY`. Output is model-generated and never modifies deterministic scores or actions.
 
 ```bash
 gittriage ai-summary
 gittriage ai-summary --no-merge-base --external
 ```
 
+### `gittriage ai-doctor`
+
+Prints whether AI is enabled, whether an API key is present, and the configured `api_base` / `model`. By default it does not call the network. With `--probe-network`, performs a short `GET` to `{api_base}/models` (OpenAI-compatible listing), sending `Authorization: Bearer …` when a key is set, to verify reachability and HTTP status.
+
+```bash
+gittriage ai-doctor
+gittriage ai-doctor --probe-network
+```
+
 ### `gittriage tui`
 
 Rebuilds the plan in-process (same `gittriage.toml` `[planner]` fields and `--no-merge-base` / `--external` as `score`/`plan`). **Read-only:** no charts, no background services, no mutation of repos.
+
+- `--scope <SCOPE>` — same member-scope buckets as `report --scope` (`local-only`, `mixed`, `remote-only`): only matching clusters appear in the table (help overlay shows when a scope filter is active).
+- If the latest scan recorded skipped nested git paths, the initial status line reminds you to set `scan.include_nested_git` when you want them inventoried.
 
 | Key | Action |
 | --- | --- |
@@ -223,7 +257,7 @@ Rebuilds the plan in-process (same `gittriage.toml` `[planner]` fields and `--no
 | `a` | Switch to Actions panel |
 | `e` | Full evidence overlay for selected cluster (Esc back) |
 | `p` | Show `canonical_pins` TOML snippet for the canonical clone |
-| `o` | Write full plan JSON to `./gittriage-plan-tui-export.json` |
+| `o` | Write full plan JSON to `tui_export_path` in config, or a timestamped `gittriage-plan-tui-export-*.json` in the current directory |
 | `?` | Help overlay (Esc or `q` closes) |
 | `q` / `Esc` / `Ctrl-c` | Quit |
 
@@ -232,6 +266,7 @@ Requires a TTY; exits with an error if stdout is not interactive.
 ```bash
 gittriage tui
 gittriage tui --no-merge-base --external
+gittriage tui --scope local-only
 ```
 
 ## AI integration
@@ -243,17 +278,19 @@ GitTriage can optionally use an OpenAI-compatible LLM to generate narrative expl
 ```toml
 [ai]
 enabled = true
-api_base = "https://api.openai.com/v1"   # or any compatible endpoint
+api_base = "https://api.openai.com/v1"   # or any OpenAI-compatible HTTP API
 model = "gpt-4o-mini"
 max_tokens = 1024
 temperature = 0.2
 ```
 
+For a **local** OpenAI-compatible server (Ollama with an OpenAI shim, LiteLLM proxy, etc.), point `api_base` at that service’s `/v1` URL and set `model` to whatever that server expects. Use `gittriage ai-doctor` to confirm the resolved settings before calling `explain --ai` or `ai-summary`.
+
 **Environment:** Set `GITTRIAGE_AI_API_KEY` or `OPENAI_API_KEY`.
 
-**Commands:** `gittriage explain --ai` (per-cluster narrative), `gittriage ai-summary` (plan-wide summary).
+**Commands:** `gittriage explain --ai` (per-cluster narrative), `gittriage ai-summary` (plan-wide summary), `gittriage ai-doctor` (config check).
 
-All AI output is clearly labeled as model-generated. When AI is disabled or misconfigured, commands exit with a clear error message.
+All AI output is clearly labeled as model-generated. For `explain --ai` and `ai-summary`, when AI is disabled or no API key is set, a short note is printed to stderr and the command **exits 0** after any deterministic output (no network call).
 
 ## Planned next-layer commands
 

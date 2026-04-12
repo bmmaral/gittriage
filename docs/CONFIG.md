@@ -19,8 +19,12 @@ See `gittriage.toml.example` in the repository root. Fields:
 | `db_path` | SQLite database path (resolved relative to config file; keep under `.gittriage/` or another ignored directory) |
 | `default_roots` | Used when `gittriage scan` is run with no path arguments |
 | `github_owner` | Optional default for `gh`-based remote ingest |
+| `github_owner_mode` | `augment` (default): only GitHub repos whose URL matches a local remote from the scan; `full_catalog`: full `gh repo list` for the owner |
 | `include_hidden` | Whether to descend into hidden directories when scanning |
-| `[scan]` | Scan behavior: `scan_mode` (`git_only` / `project_roots`), `max_depth`, `respect_gitignore`, `max_readme_bytes`, `max_hash_files` |
+| `tui_export_path` | Optional path for TUI `o` export; if unset, a timestamped file in the working directory is used |
+| `[scan]` | Scan behavior: `scan_mode` (`git_only` / `project_roots`), `max_depth`, `respect_gitignore`, `max_readme_bytes`, `max_hash_files`, `include_nested_git` (discover nested `.git` under a root; off by default) |
+
+The latest `runs` row may include JSON in `stats_json` (e.g. `skipped_nested_git` paths when nested repos were skipped); `gittriage report` surfaces those paths when present.
 | `[planner]` | Ambiguity and publish-action thresholds; optional `canonical_pins`, `ignored_cluster_keys`, `archive_hint_cluster_keys`, `scoring_profile` (see `docs/SCORING_PROFILES.md`, `docs/CLI.md`) |
 | `[ai]` | Optional AI-assisted explanations; `enabled`, `api_base`, `model`, `max_tokens`, `temperature` (see `docs/CLI.md` § AI integration) |
 
@@ -31,7 +35,7 @@ See `gittriage.toml.example` in the repository root. Fields:
 | `git_only` (default) | Only directories containing `.git` are treated as project roots |
 | `project_roots` | Directories with `.git` or common manifests (`Cargo.toml`, `package.json`, etc.) are included |
 
-When a `.git` root is found, subdirectories are **not** scanned for nested project roots (prevents monorepo sub-packages from appearing as separate entries).
+When a `.git` root is found, subdirectories are **not** scanned for nested project roots (prevents monorepo sub-packages from appearing as separate entries). Nested `.git` directories inside another root are **skipped** unless `scan.include_nested_git = true`; when skipped, paths are listed on stderr during `scan`.
 
 Place a `.gittriageignore` file in any scan root with glob patterns (one per line) to exclude matching directories.
 

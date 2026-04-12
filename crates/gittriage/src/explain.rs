@@ -8,17 +8,24 @@ pub enum ExplainFormat {
     Json,
 }
 
+pub fn cluster_plan_for_target<'a>(
+    plan: &'a PlanDocument,
+    target: &ExplainTarget,
+) -> Result<&'a ClusterPlan> {
+    match target {
+        ExplainTarget::Cluster { query } => resolve_cluster_plan(plan, query),
+        ExplainTarget::Clone { id } => cluster_for_member(plan, MemberKind::Clone, id),
+        ExplainTarget::Remote { id } => cluster_for_member(plan, MemberKind::Remote, id),
+    }
+}
+
 pub fn run_explain(
     snapshot: &InventorySnapshot,
     plan: &PlanDocument,
-    target: ExplainTarget,
+    target: &ExplainTarget,
     format: ExplainFormat,
 ) -> Result<()> {
-    let cp = match target {
-        ExplainTarget::Cluster { query } => resolve_cluster_plan(plan, &query)?,
-        ExplainTarget::Clone { id } => cluster_for_member(plan, MemberKind::Clone, &id)?,
-        ExplainTarget::Remote { id } => cluster_for_member(plan, MemberKind::Remote, &id)?,
-    };
+    let cp = cluster_plan_for_target(plan, target)?;
 
     match format {
         ExplainFormat::Text => println!("{}", render_explain_text(cp, snapshot)),
@@ -35,7 +42,7 @@ pub fn run_explain(
     Ok(())
 }
 
-#[derive(Debug, clap::Subcommand)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum ExplainTarget {
     /// Cluster id, exact label (case-insensitive), or unique substring of id/label.
     Cluster {
@@ -54,7 +61,10 @@ pub enum ExplainTarget {
     },
 }
 
-fn resolve_cluster_plan<'a>(plan: &'a PlanDocument, query: &str) -> Result<&'a ClusterPlan> {
+pub(crate) fn resolve_cluster_plan<'a>(
+    plan: &'a PlanDocument,
+    query: &str,
+) -> Result<&'a ClusterPlan> {
     let q = query.trim();
     if q.is_empty() {
         bail!("cluster query is empty");
@@ -100,7 +110,7 @@ fn resolve_cluster_plan<'a>(plan: &'a PlanDocument, query: &str) -> Result<&'a C
     Ok(substr[0])
 }
 
-fn cluster_for_member<'a>(
+pub(crate) fn cluster_for_member<'a>(
     plan: &'a PlanDocument,
     kind: MemberKind,
     id: &str,

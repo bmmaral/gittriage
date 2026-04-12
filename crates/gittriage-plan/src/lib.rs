@@ -73,13 +73,82 @@ pub fn build_plan(snapshot: &InventorySnapshot) -> Result<PlanDocument> {
 
 pub fn build_plan_with(snapshot: &InventorySnapshot, opts: PlanBuildOpts) -> Result<PlanDocument> {
     let clusters = resolve_clusters(snapshot, &opts);
-    Ok(PlanDocument {
+    let mut plan = PlanDocument {
         schema_version: 1,
         scoring_rules_version: crate::scoring::SCORING_RULES_VERSION,
         generated_at: Utc::now(),
         generated_by: format!("gittriage {}", env!("CARGO_PKG_VERSION")),
         clusters,
-    })
+        external_adapter_run: None,
+    };
+    attach_inventory_insights(&mut plan, snapshot);
+    Ok(plan)
+}
+
+/// Attach scan-derived evidence (e.g. skipped nested git repos under inventoried roots).
+pub fn attach_inventory_insights(plan: &mut PlanDocument, snapshot: &InventorySnapshot) {
+    let Some(stats) = snapshot.run.as_ref().and_then(|r| r.stats.as_ref()) else {
+        return;
+    };
+    if stats.skipped_nested_git.is_empty() {
+        return;
+    }
+
+    let skipped: Vec<std::path::PathBuf> = stats
+        .skipped_nested_git
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect();
+
+    let clone_by_id: HashMap<&str, &CloneRecord> =
+        snapshot.clones.iter().map(|c| (c.id.as_str(), c)).collect();
+
+    for cp in &mut plan.clusters {
+        let mut nested_under: Vec<String> = Vec::new();
+        for m in &cp.cluster.members {
+            if m.kind != MemberKind::Clone {
+                continue;
+            }
+            let Some(cl) = clone_by_id.get(m.id.as_str()) else {
+                continue;
+            };
+            let parent = Path::new(cl.path.as_str());
+            for sp in &skipped {
+                if sp.starts_with(parent) && sp.as_path() != parent {
+                    nested_under.push(sp.display().to_string());
+                }
+            }
+        }
+        nested_under.sort();
+        nested_under.dedup();
+        if nested_under.is_empty() {
+            continue;
+        }
+
+        let subject = cp.cluster.canonical_clone_id.clone().or_else(|| {
+            cp.cluster
+                .members
+                .iter()
+                .find(|m| m.kind == MemberKind::Clone)
+                .map(|m| m.id.clone())
+        });
+        let Some(sid) = subject else {
+            continue;
+        };
+
+        let detail = format!(
+            "Nested git repo(s) under this tree were not inventoried (set scan.include_nested_git = true to include): {}",
+            nested_under.join("; ")
+        );
+        cp.cluster.evidence.push(EvidenceItem {
+            id: format!("scan-nested-{}", Uuid::new_v4()),
+            subject_kind: MemberKind::Clone,
+            subject_id: sid,
+            kind: "nested_git_repo_skipped".into(),
+            score_delta: 0.0,
+            detail,
+        });
+    }
 }
 
 pub fn resolve_clusters(snapshot: &InventorySnapshot, opts: &PlanBuildOpts) -> Vec<ClusterPlan> {
@@ -141,6 +210,10 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, opts: &PlanBuildOpts) -> V
             remote_seen.insert(remote.id.clone());
         }
     }
+
+    // Merge buckets that share a normalized remote URL or an identical scan fingerprint so
+    // local-only scans still group duplicate checkouts (e.g. "aegis" vs "aegis copy").
+    let buckets = merge_cluster_buckets(buckets, snapshot);
 
     let mut plans = Vec::new();
     for (cluster_key, (cluster_clones, cluster_remotes)) in buckets {
@@ -277,6 +350,146 @@ fn evidence_subject_cluster(cluster: &ClusterRecord) -> (String, MemberKind) {
         return (m.id.clone(), m.kind.clone());
     }
     ("cluster".into(), MemberKind::Clone)
+}
+
+struct UnionFind {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            rank: vec![0; n],
+        }
+    }
+
+    fn find(&mut self, x: usize) -> usize {
+        if self.parent[x] != x {
+            self.parent[x] = self.find(self.parent[x]);
+        }
+        self.parent[x]
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let ra = self.find(a);
+        let rb = self.find(b);
+        if ra == rb {
+            return;
+        }
+        if self.rank[ra] < self.rank[rb] {
+            self.parent[ra] = rb;
+        } else if self.rank[ra] > self.rank[rb] {
+            self.parent[rb] = ra;
+        } else {
+            self.parent[rb] = ra;
+            self.rank[ra] = self.rank[ra].saturating_add(1);
+        }
+    }
+}
+
+fn merge_cluster_buckets(
+    buckets: BTreeMap<String, (Vec<CloneRecord>, Vec<RemoteRecord>)>,
+    snapshot: &InventorySnapshot,
+) -> BTreeMap<String, (Vec<CloneRecord>, Vec<RemoteRecord>)> {
+    if buckets.len() <= 1 {
+        return buckets;
+    }
+    let clone_urls = snapshot_clone_normalized_urls(snapshot);
+    let entries: Vec<(String, Vec<CloneRecord>, Vec<RemoteRecord>)> = buckets
+        .into_iter()
+        .map(|(k, (cl, rm))| (k, cl, rm))
+        .collect();
+    let n = entries.len();
+    let mut uf = UnionFind::new(n);
+
+    for i in 0..n {
+        for j in i + 1..n {
+            let mut merge = false;
+            for ca in &entries[i].1 {
+                let Some(ua) = clone_urls.get(&ca.id) else {
+                    continue;
+                };
+                for cb in &entries[j].1 {
+                    let Some(ub) = clone_urls.get(&cb.id) else {
+                        continue;
+                    };
+                    if ua.iter().any(|u| ub.contains(u)) {
+                        merge = true;
+                        break;
+                    }
+                }
+                if merge {
+                    break;
+                }
+            }
+            if merge {
+                uf.union(i, j);
+            }
+        }
+    }
+
+    let mut by_root: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        by_root.entry(uf.find(i)).or_default().push(i);
+    }
+
+    let mut out: BTreeMap<String, (Vec<CloneRecord>, Vec<RemoteRecord>)> = BTreeMap::new();
+    for idxs in by_root.into_values() {
+        let mut old_keys: Vec<String> = Vec::new();
+        let mut merged_clones: Vec<CloneRecord> = Vec::new();
+        let mut merged_remotes: Vec<RemoteRecord> = Vec::new();
+        let mut seen_c: HashSet<String> = HashSet::new();
+        let mut seen_r: HashSet<String> = HashSet::new();
+        for &idx in &idxs {
+            old_keys.push(entries[idx].0.clone());
+            for c in &entries[idx].1 {
+                if seen_c.insert(c.id.clone()) {
+                    merged_clones.push(c.clone());
+                }
+            }
+            for r in &entries[idx].2 {
+                if seen_r.insert(r.id.clone()) {
+                    merged_remotes.push(r.clone());
+                }
+            }
+        }
+        let cluster_key = derive_merged_cluster_key(&old_keys, &merged_clones, &clone_urls);
+        let mut key = cluster_key.clone();
+        let mut suf = 0u32;
+        while out.contains_key(&key) {
+            suf += 1;
+            key = format!("{cluster_key}#{suf}");
+        }
+        out.insert(key, (merged_clones, merged_remotes));
+    }
+    out
+}
+
+fn derive_merged_cluster_key(
+    old_keys: &[String],
+    clones: &[CloneRecord],
+    clone_urls: &HashMap<String, BTreeSet<String>>,
+) -> String {
+    let mut urls: BTreeSet<String> = BTreeSet::new();
+    for k in old_keys {
+        if let Some(rest) = k.strip_prefix("url:") {
+            urls.insert(rest.to_string());
+        }
+    }
+    for c in clones {
+        if let Some(u) = clone_urls.get(&c.id) {
+            urls.extend(u.iter().cloned());
+        }
+    }
+    if let Some(u) = urls.iter().next() {
+        format!("url:{u}")
+    } else if let Some(c) = clones.first() {
+        format!("name:{}", sanitize_name(&c.display_name))
+    } else {
+        format!("name:merged-{}", Uuid::new_v4())
+    }
 }
 
 fn snapshot_clone_normalized_urls(

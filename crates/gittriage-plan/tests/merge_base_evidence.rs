@@ -117,6 +117,7 @@ fn merge_base_evidence_is_attached_best_effort() {
         clones: vec![clone_a.clone(), clone_b.clone()],
         remotes: vec![],
         links: vec![],
+        ..Default::default()
     };
 
     let plan = build_plan_with(

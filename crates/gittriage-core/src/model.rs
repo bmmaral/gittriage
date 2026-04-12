@@ -49,6 +49,14 @@ pub enum ActionType {
     PublishOssCandidate,
 }
 
+/// Optional scan-time metadata persisted in `runs.stats_json`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct RunScanStats {
+    /// Nested `.git` directories skipped because `scan.include_nested_git` is false.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_nested_git: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunRecord {
     pub id: String,
@@ -57,6 +65,8 @@ pub struct RunRecord {
     pub roots: Vec<String>,
     pub github_owner: Option<String>,
     pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats: Option<RunScanStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +142,38 @@ pub struct ScoreBundle {
     pub risk: f64,
 }
 
+/// Filter markdown/TUI/plan views to one member-scope bucket ([`ClusterRecord::cluster_scope`]).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ClusterScopeFilter {
+    LocalOnly,
+    Mixed,
+    RemoteOnly,
+}
+
+impl ClusterScopeFilter {
+    pub fn matches(self, scope: ClusterScope) -> bool {
+        matches!(
+            (scope, self),
+            (ClusterScope::LocalOnly, Self::LocalOnly)
+                | (ClusterScope::Mixed, Self::Mixed)
+                | (ClusterScope::RemoteOnly, Self::RemoteOnly)
+        )
+    }
+}
+
+/// Whether a cluster has local clone members, remote-only members, or both.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ClusterScope {
+    /// At least one clone member, no remote members.
+    LocalOnly,
+    /// Both clone and remote members.
+    Mixed,
+    /// Remote members only (no local checkout in this cluster).
+    RemoteOnly,
+    /// No members (unexpected; treated as its own bucket for reporting).
+    Empty,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterRecord {
     pub id: String,
@@ -144,6 +186,20 @@ pub struct ClusterRecord {
     pub members: Vec<ClusterMember>,
     pub evidence: Vec<EvidenceItem>,
     pub scores: ScoreBundle,
+}
+
+impl ClusterRecord {
+    /// Classify cluster by member kinds (local clones vs remotes in the inventory).
+    pub fn cluster_scope(&self) -> ClusterScope {
+        let has_clone = self.members.iter().any(|m| m.kind == MemberKind::Clone);
+        let has_remote = self.members.iter().any(|m| m.kind == MemberKind::Remote);
+        match (has_clone, has_remote) {
+            (true, false) => ClusterScope::LocalOnly,
+            (true, true) => ClusterScope::Mixed,
+            (false, true) => ClusterScope::RemoteOnly,
+            _ => ClusterScope::Empty,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +228,23 @@ pub struct ClusterPlan {
     pub actions: Vec<PlanAction>,
 }
 
+/// Summary of the last `plan --external` / adapter attach (optional in JSON for backward compatibility).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct PlanExternalAdapterRun {
+    /// How many adapter binaries were on `PATH` at run start (gitleaks, semgrep, jscpd, syft).
+    pub tools_on_path: u8,
+    /// Clusters with a canonical clone path considered for adapter runs.
+    pub canonical_clone_roots_considered: u32,
+    /// Tool invocations attempted (up to 4 per canonical root).
+    pub tool_spawn_attempts: u32,
+    /// New adapter evidence rows attached (`jscpd_scan`, `semgrep_scan`, …).
+    pub evidence_items_attached: u32,
+    /// Canonical paths that were not directories on disk.
+    pub skipped_clone_path_not_directory: u32,
+    /// Runs that timed out or exited non-zero (still recorded as evidence when applicable).
+    pub runs_timeout_or_nonzero_exit: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanDocument {
     /// JSON plan format version. Missing in older files deserializes as `1`.
@@ -183,6 +256,9 @@ pub struct PlanDocument {
     pub generated_at: DateTime<Utc>,
     pub generated_by: String,
     pub clusters: Vec<ClusterPlan>,
+    /// Populated after optional external adapter attach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_adapter_run: Option<PlanExternalAdapterRun>,
 }
 
 const fn plan_schema_version() -> u32 {
@@ -201,10 +277,48 @@ pub struct CloneRemoteLink {
     pub relationship: String,
 }
 
+/// Explains [`InventorySnapshot::clones`] for exports and APIs (v1: all roots stay in `clones`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InventorySemantics {
+    pub version: u32,
+    pub git_checkout_count: usize,
+    pub manifest_only_project_root_count: usize,
+    /// Human-readable clarification for `project_roots` vs `git_only` consumers.
+    pub note: String,
+}
+
+impl Default for InventorySemantics {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            git_checkout_count: 0,
+            manifest_only_project_root_count: 0,
+            note: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InventorySnapshot {
     pub run: Option<RunRecord>,
     pub clones: Vec<CloneRecord>,
     pub remotes: Vec<RemoteRecord>,
     pub links: Vec<CloneRemoteLink>,
+    /// Derived from `clones` on load/export; documents that `clones` is “project roots”, not only git checkouts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantics: Option<InventorySemantics>,
+}
+
+impl InventorySnapshot {
+    /// Refreshes [`InventorySnapshot::semantics`] from [`Self::clones`].
+    pub fn refresh_semantics(&mut self) {
+        let git = self.clones.iter().filter(|c| c.is_git).count();
+        let total = self.clones.len();
+        self.semantics = Some(InventorySemantics {
+            version: 1,
+            git_checkout_count: git,
+            manifest_only_project_root_count: total.saturating_sub(git),
+            note: "Field `clones` lists every scanned project root. `is_git == true` means a `.git` directory was present; `false` is a manifest-only root when using scan_mode project_roots.".into(),
+        });
+    }
 }

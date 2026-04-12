@@ -6,6 +6,7 @@ use chrono::{Duration, Utc};
 use gittriage_core::{
     CloneRecord, ClusterStatus, EvidenceItem, MemberKind, RemoteRecord, ScoreBundle,
 };
+use std::cmp::Reverse;
 use uuid::Uuid;
 
 /// Bump when rule weights or evidence kinds change materially (keep in sync with docs).
@@ -23,6 +24,35 @@ pub struct ClusterEvaluation {
     pub confidence: f64,
 }
 
+/// Penalize obvious duplicate / scratch path tokens ("copy", "backup", "old", …).
+fn path_semantic_penalty(path: &str) -> i32 {
+    let lower = path.to_lowercase();
+    let mut p = 0i32;
+    const BAD: &[&str] = &[
+        " copy", "/copy/", "/copy ", " copy/", " copy 2", "copy 2", " backup", "/backup/",
+        "/backup ", " backup/", " old", "/old/", "/old ", " tmp", "/tmp/", ".tmp",
+    ];
+    for s in BAD {
+        if lower.contains(s) {
+            p = p.saturating_add(8);
+        }
+    }
+    p
+}
+
+fn choose_canonical_clone(clones: &[CloneRecord]) -> Option<&CloneRecord> {
+    clones.iter().max_by_key(|c| {
+        (
+            c.last_commit_at,
+            c.is_git,
+            !c.is_dirty,
+            Reverse(path_semantic_penalty(&c.path)),
+            Reverse(c.path.len()),
+            Reverse(c.path.matches('/').count()),
+        )
+    })
+}
+
 pub fn evaluate_cluster(
     clones: &[CloneRecord],
     remotes: &[RemoteRecord],
@@ -31,9 +61,7 @@ pub fn evaluate_cluster(
     let mut evidence = Vec::with_capacity(clones.len() * 8 + remotes.len() * 4);
     let mut scores = ScoreBundle::default();
 
-    let canonical_clone = clones
-        .iter()
-        .max_by_key(|c| (c.last_commit_at, c.is_git, !c.is_dirty));
+    let canonical_clone = choose_canonical_clone(clones);
     let canonical_remote = remotes.iter().max_by_key(|r| r.pushed_at);
 
     if let Some(clone) = canonical_clone {
@@ -44,7 +72,7 @@ pub fn evaluate_cluster(
             &clone.id,
             MemberKind::Clone,
             "canonical_clone_pick",
-            "selected as canonical local candidate (freshness, git metadata, clean tree tie-break)",
+            "selected as canonical local candidate (freshness, git metadata, clean tree, then path semantics: avoid copy/backup/old path tokens, prefer shorter paths)",
         );
 
         if clone.is_git {

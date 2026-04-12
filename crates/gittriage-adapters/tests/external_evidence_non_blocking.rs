@@ -44,6 +44,7 @@ fn external_evidence_is_best_effort_and_non_blocking() {
         }],
         remotes: vec![],
         links: vec![],
+        ..Default::default()
     };
 
     let mut plan = PlanDocument {
@@ -51,6 +52,7 @@ fn external_evidence_is_best_effort_and_non_blocking() {
         scoring_rules_version: 5,
         generated_at: Utc::now(),
         generated_by: "test".into(),
+        external_adapter_run: None,
         clusters: vec![ClusterPlan {
             cluster: ClusterRecord {
                 id: "cluster-1".into(),

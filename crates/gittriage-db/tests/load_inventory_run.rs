@@ -1,5 +1,5 @@
 use chrono::{Duration, Utc};
-use gittriage_core::{CloneRecord, RunRecord};
+use gittriage_core::{CloneRecord, RunRecord, RunScanStats};
 use gittriage_db::Database;
 use tempfile::tempdir;
 
@@ -16,6 +16,9 @@ fn load_inventory_includes_latest_run() {
         roots: vec!["/tmp".into()],
         github_owner: None,
         version: "0.1.1".into(),
+        stats: Some(RunScanStats {
+            skipped_nested_git: vec!["/tmp/p/nested/.git".into()],
+        }),
     };
     db.save_run(&run).expect("save_run");
     db.save_clones(
@@ -46,6 +49,8 @@ fn load_inventory_includes_latest_run() {
     let r = inv.run.expect("run");
     assert_eq!(r.id, "run-1");
     assert_eq!(r.roots, vec!["/tmp".to_string()]);
+    let st = r.stats.expect("stats");
+    assert_eq!(st.skipped_nested_git, vec!["/tmp/p/nested/.git"]);
 }
 
 #[test]
@@ -61,6 +66,7 @@ fn load_inventory_latest_run_is_most_recent_started_at() {
         roots: vec!["old".into()],
         github_owner: None,
         version: "a".into(),
+        stats: None,
     };
     let newer = RunRecord {
         id: "run-new".into(),
@@ -69,6 +75,7 @@ fn load_inventory_latest_run_is_most_recent_started_at() {
         roots: vec!["new".into()],
         github_owner: None,
         version: "b".into(),
+        stats: None,
     };
     db.save_run(&older).expect("save older");
     db.save_run(&newer).expect("save newer");

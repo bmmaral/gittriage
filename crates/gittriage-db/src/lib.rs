@@ -6,7 +6,7 @@ use std::path::Path;
 
 use gittriage_core::{
     ActionType, CloneRecord, CloneRemoteLink, ClusterStatus, InventorySnapshot, MemberKind,
-    PlanDocument, Priority, RemoteRecord, RunRecord,
+    PlanDocument, Priority, RemoteRecord, RunRecord, RunScanStats,
 };
 use uuid::Uuid;
 
@@ -119,7 +119,42 @@ impl Database {
         Ok(n as u64)
     }
 
+    /// Clears inventory and plan tables in FK-safe order before a new `scan` persist.
+    ///
+    /// `scan` uses `INSERT OR REPLACE` on `clones` by primary key; without this, replacing a row
+    /// that shares a unique `path` with an older row would delete the old clone while persisted
+    /// `clusters` still reference it → SQLite error 787 (`FOREIGN KEY constraint failed`).
+    pub fn prepare_for_scan_persist(&mut self) -> Result<()> {
+        let tx = self
+            .conn
+            .transaction()
+            .context("begin prepare_for_scan_persist transaction")?;
+        tx.execute("DELETE FROM actions", [])
+            .context("delete actions before scan")?;
+        tx.execute("DELETE FROM evidence", [])
+            .context("delete evidence before scan")?;
+        tx.execute("DELETE FROM cluster_members", [])
+            .context("delete cluster_members before scan")?;
+        tx.execute("DELETE FROM clusters", [])
+            .context("delete clusters before scan")?;
+        tx.execute("DELETE FROM clone_remote_links", [])
+            .context("delete clone_remote_links before scan")?;
+        tx.execute("DELETE FROM clones", [])
+            .context("delete clones before scan")?;
+        tx.execute("DELETE FROM remotes", [])
+            .context("delete remotes before scan")?;
+        tx.commit()
+            .context("commit prepare_for_scan_persist transaction")?;
+        Ok(())
+    }
+
     pub fn save_run(&self, run: &RunRecord) -> Result<()> {
+        let stats_json = run
+            .stats
+            .as_ref()
+            .map(|s| serde_json::to_string(s))
+            .transpose()
+            .context("serialize run.stats")?;
         self.conn.execute(
             r#"
             INSERT OR REPLACE INTO runs (id, started_at, finished_at, roots_json, github_owner, version, stats_json)
@@ -132,10 +167,31 @@ impl Database {
                 serde_json::to_string(&run.roots)?,
                 run.github_owner,
                 run.version,
-                Option::<String>::None
+                stats_json,
             ],
         )?;
         Ok(())
+    }
+
+    /// Rows in `clusters` and the latest `updated_at` among them (SQLite persisted plan), if any.
+    pub fn persisted_plan_cluster_stats(
+        &self,
+    ) -> Result<(u64, Option<chrono::DateTime<chrono::Utc>>)> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM clusters", [], |row| row.get(0))
+            .context("count clusters for stats")?;
+        if n == 0 {
+            return Ok((0, None));
+        }
+        let max_s: String = self
+            .conn
+            .query_row("SELECT MAX(updated_at) FROM clusters", [], |row| row.get(0))
+            .context("max cluster updated_at")?;
+        let ts = chrono::DateTime::parse_from_rfc3339(&max_s)
+            .ok()
+            .map(|d| d.with_timezone(&Utc));
+        Ok((n as u64, ts))
     }
 
     pub fn save_clones(&mut self, run_id: &str, clones: &[CloneRecord]) -> Result<()> {
@@ -330,12 +386,15 @@ impl Database {
 
         let run = load_latest_run(&self.conn).context("load latest run")?;
 
-        Ok(InventorySnapshot {
+        let mut snap = InventorySnapshot {
             run,
             clones,
             remotes,
             links,
-        })
+            semantics: None,
+        };
+        snap.refresh_semantics();
+        Ok(snap)
     }
 
     /// Wipes plan tables, clone/remote/link rows, and all runs, then inserts the snapshot
@@ -374,7 +433,15 @@ impl Database {
             roots: vec!["<gittriage import>".to_string()],
             github_owner: None,
             version: app_version.to_string(),
+            stats: None,
         });
+
+        let stats_json = run
+            .stats
+            .as_ref()
+            .map(|s| serde_json::to_string(s))
+            .transpose()
+            .context("serialize run.stats for import")?;
 
         tx.execute(
             r#"
@@ -388,7 +455,7 @@ impl Database {
                 serde_json::to_string(&run.roots)?,
                 run.github_owner,
                 run.version,
-                Option::<String>::None
+                stats_json,
             ],
         )
         .context("insert run")?;
@@ -562,7 +629,7 @@ fn load_latest_run(conn: &rusqlite::Connection) -> Result<Option<RunRecord>> {
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, started_at, finished_at, roots_json, github_owner, version
+            SELECT id, started_at, finished_at, roots_json, github_owner, version, stats_json
             FROM runs
             ORDER BY datetime(started_at) DESC
             LIMIT 1
@@ -574,6 +641,12 @@ fn load_latest_run(conn: &rusqlite::Connection) -> Result<Option<RunRecord>> {
     let Some(row) = rows.next()? else {
         return Ok(None);
     };
+
+    let stats = row
+        .get::<_, Option<String>>(6)?
+        .map(|s| serde_json::from_str::<RunScanStats>(&s))
+        .transpose()
+        .context("deserialize run.stats_json")?;
 
     let started: String = row.get(1)?;
     let started_at = chrono::DateTime::parse_from_rfc3339(&started)
@@ -598,6 +671,7 @@ fn load_latest_run(conn: &rusqlite::Connection) -> Result<Option<RunRecord>> {
         roots,
         github_owner: row.get(4)?,
         version: row.get(5)?,
+        stats,
     }))
 }
 

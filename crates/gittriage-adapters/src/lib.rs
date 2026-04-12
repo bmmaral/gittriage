@@ -169,13 +169,30 @@ pub fn attach_external_evidence(
     attach_external_evidence_cached(plan, snapshot, &mut cache)
 }
 
+/// Count evidence rows produced by optional CLI adapters (for `--external` summaries).
+pub fn count_adapter_evidence(plan: &PlanDocument) -> usize {
+    const KINDS: &[&str] = &["jscpd_scan", "semgrep_scan", "gitleaks_detect", "syft_sbom"];
+    plan.clusters
+        .iter()
+        .flat_map(|cp| &cp.cluster.evidence)
+        .filter(|e| KINDS.contains(&e.kind.as_str()))
+        .count()
+}
+
 /// Same as [`attach_external_evidence`] but accepts a reusable cache.
 pub fn attach_external_evidence_cached(
     plan: &mut PlanDocument,
     snapshot: &InventorySnapshot,
     cache: &mut AdapterCache,
 ) -> Result<()> {
+    let tools_on_path = probe_all().iter().filter(|(_, ok)| *ok).count() as u8;
+    let evidence_before = count_adapter_evidence(plan);
     let by_id: HashMap<_, _> = snapshot.clones.iter().map(|c| (c.id.clone(), c)).collect();
+
+    let mut canonical_clone_roots_considered: u32 = 0;
+    let mut skipped_clone_path_not_directory: u32 = 0;
+    let mut tool_spawn_attempts: u32 = 0;
+    let mut runs_timeout_or_nonzero_exit: u32 = 0;
 
     for cp in &mut plan.clusters {
         let Some(cid) = cp.cluster.canonical_clone_id.as_ref() else {
@@ -185,18 +202,34 @@ pub fn attach_external_evidence_cached(
             continue;
         };
         let root = Path::new(clone.path.as_str());
+        canonical_clone_roots_considered = canonical_clone_roots_considered.saturating_add(1);
         if !root.is_dir() {
+            skipped_clone_path_not_directory = skipped_clone_path_not_directory.saturating_add(1);
             continue;
         }
 
         for tool in ExternalTool::ALL {
+            tool_spawn_attempts = tool_spawn_attempts.saturating_add(1);
             if let Some(result) = cache.get_or_run(tool, root).clone() {
+                if result.exit_code != 0 {
+                    runs_timeout_or_nonzero_exit = runs_timeout_or_nonzero_exit.saturating_add(1);
+                }
                 cp.cluster
                     .evidence
                     .push(adapter_evidence(tool, cid, &result));
             }
         }
     }
+
+    let evidence_after = count_adapter_evidence(plan);
+    plan.external_adapter_run = Some(gittriage_core::PlanExternalAdapterRun {
+        tools_on_path,
+        canonical_clone_roots_considered,
+        tool_spawn_attempts,
+        evidence_items_attached: evidence_after.saturating_sub(evidence_before) as u32,
+        skipped_clone_path_not_directory,
+        runs_timeout_or_nonzero_exit,
+    });
 
     Ok(())
 }

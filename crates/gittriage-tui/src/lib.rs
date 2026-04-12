@@ -14,6 +14,7 @@ use ratatui::widgets::{
 use ratatui::{DefaultTerminal, Frame};
 use std::collections::HashSet;
 use std::io::{self, IsTerminal};
+use std::path::PathBuf;
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 const FG: Color = Color::White;
@@ -155,6 +156,12 @@ enum Overlay {
 // ── Public API ───────────────────────────────────────────────────────────────
 pub struct TuiConfig {
     pub config_pins: HashSet<String>,
+    /// Path written when pressing `o` (see `tui_export_path` in `gittriage.toml`).
+    pub export_path: PathBuf,
+    /// When set, only clusters matching this member-scope bucket appear in the list.
+    pub scope_filter: Option<gittriage_core::ClusterScopeFilter>,
+    /// From latest scan stats; surfaced in the initial status line when non-empty.
+    pub skipped_nested_git_paths: Vec<String>,
 }
 
 pub fn run(plan: PlanDocument, config: TuiConfig) -> Result<()> {
@@ -212,6 +219,14 @@ struct EvidenceLine {
 
 impl App {
     fn new(plan: PlanDocument, config: TuiConfig) -> Self {
+        let status_msg = if config.skipped_nested_git_paths.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "{} nested git repo(s) skipped under scanned roots (set scan.include_nested_git = true in gittriage.toml)",
+                config.skipped_nested_git_paths.len()
+            )
+        };
         let mut s = Self {
             plan,
             config,
@@ -226,7 +241,7 @@ impl App {
             evidence_list_state: ListState::default(),
             evidence_lines: Vec::new(),
             action_list_state: ListState::default(),
-            status_msg: String::new(),
+            status_msg,
         };
         s.rebuild_ordered();
         s
@@ -237,6 +252,13 @@ impl App {
         let needle = self.filter_applied.to_lowercase();
         let mut v: Vec<usize> = (0..n)
             .filter(|&i| {
+                let scope_ok = match self.config.scope_filter {
+                    None => true,
+                    Some(f) => f.matches(self.plan.clusters[i].cluster.cluster_scope()),
+                };
+                if !scope_ok {
+                    return false;
+                }
                 if needle.is_empty() {
                     return true;
                 }
@@ -897,7 +919,7 @@ impl App {
             ("e", "Open evidence overlay"),
             ("a", "Switch to Actions panel"),
             ("p", "Show canonical pin TOML snippet"),
-            ("o", "Export plan JSON to file"),
+            ("o", "Export plan JSON (see path below)"),
             ("?", "This help"),
             ("Esc", "Close overlay / cancel"),
         ];
@@ -913,6 +935,26 @@ impl App {
             lines.push(Line::from(vec![
                 Span::styled(format!("  {:<14}", key), key_style()),
                 Span::styled(*desc, Style::new().fg(FG)),
+            ]));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  Export → ", dim()),
+            Span::styled(
+                self.config.export_path.display().to_string(),
+                Style::new().fg(FG),
+            ),
+        ]));
+        if let Some(f) = self.config.scope_filter {
+            let label = match f {
+                gittriage_core::ClusterScopeFilter::LocalOnly => "local-only",
+                gittriage_core::ClusterScopeFilter::Mixed => "mixed",
+                gittriage_core::ClusterScopeFilter::RemoteOnly => "remote-only",
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  Scope filter: ", dim()),
+                Span::styled(label, Style::new().fg(FG)),
+                Span::styled(" (from `gittriage tui --scope`)", dim()),
             ]));
         }
         lines.push(Line::from(""));
@@ -1125,10 +1167,11 @@ impl App {
     }
 
     fn export_plan(&mut self) {
+        let path = self.config.export_path.clone();
         match serde_json::to_string_pretty(&self.plan) {
-            Ok(json) => match std::fs::write("gittriage-plan-tui-export.json", json) {
+            Ok(json) => match std::fs::write(&path, json) {
                 Ok(()) => {
-                    self.status_msg = "Exported to gittriage-plan-tui-export.json".into();
+                    self.status_msg = format!("Exported to {}", path.display());
                 }
                 Err(e) => {
                     self.status_msg = format!("Export failed: {e}");
@@ -1217,6 +1260,7 @@ mod tests {
             generated_at: chrono::Utc::now(),
             generated_by: "test".into(),
             clusters,
+            external_adapter_run: None,
         }
     }
 
@@ -1230,6 +1274,9 @@ mod tests {
             plan,
             TuiConfig {
                 config_pins: HashSet::new(),
+                export_path: PathBuf::from("gittriage-tui-test-export.json"),
+                scope_filter: None,
+                skipped_nested_git_paths: vec![],
             },
         );
         app.sort = SortKey::RiskDesc;
@@ -1248,6 +1295,9 @@ mod tests {
             plan,
             TuiConfig {
                 config_pins: HashSet::new(),
+                export_path: PathBuf::from("gittriage-tui-test-export.json"),
+                scope_filter: None,
+                skipped_nested_git_paths: vec![],
             },
         );
         app.sort = SortKey::HealthDesc;
@@ -1266,6 +1316,9 @@ mod tests {
             plan,
             TuiConfig {
                 config_pins: HashSet::new(),
+                export_path: PathBuf::from("gittriage-tui-test-export.json"),
+                scope_filter: None,
+                skipped_nested_git_paths: vec![],
             },
         );
         app.filter_applied = "beta".into();
@@ -1283,6 +1336,9 @@ mod tests {
             plan,
             TuiConfig {
                 config_pins: HashSet::new(),
+                export_path: PathBuf::from("gittriage-tui-test-export.json"),
+                scope_filter: None,
+                skipped_nested_git_paths: vec![],
             },
         );
         app.move_selection(100);
@@ -1307,6 +1363,9 @@ mod tests {
             plan,
             TuiConfig {
                 config_pins: HashSet::new(),
+                export_path: PathBuf::from("gittriage-tui-test-export.json"),
+                scope_filter: None,
+                skipped_nested_git_paths: vec![],
             },
         );
         app.open_evidence();
@@ -1336,6 +1395,9 @@ mod tests {
             plan,
             TuiConfig {
                 config_pins: HashSet::new(),
+                export_path: PathBuf::from("gittriage-tui-test-export.json"),
+                scope_filter: None,
+                skipped_nested_git_paths: vec![],
             },
         );
         assert_eq!(app.total_actions(), 1);

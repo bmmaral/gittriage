@@ -12,6 +12,7 @@ fn fixture_plan() -> PlanDocument {
             .parse::<DateTime<Utc>>()
             .expect("fixture time"),
         generated_by: "gittriage-test".into(),
+        external_adapter_run: None,
         clusters: vec![ClusterPlan {
             cluster: ClusterRecord {
                 id: "cluster-snap-1".into(),

@@ -67,7 +67,11 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "ok": true, "service": "gittriage-api" }))
+    Json(serde_json::json!({
+        "ok": true,
+        "service": "gittriage-api",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
 }
 
 async fn plan_json(

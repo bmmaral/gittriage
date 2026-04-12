@@ -47,6 +47,67 @@ fn sample_github_remote(id: &str, norm: &str) -> RemoteRecord {
 }
 
 #[test]
+fn two_clones_local_git_same_normalized_url_merge_to_one_cluster() {
+    let c1 = sample_clone("clone-a", "proj-a");
+    let c2 = sample_clone("clone-b", "proj-b");
+    let r1 = RemoteRecord {
+        id: "rloc-1".into(),
+        provider: "local-git".into(),
+        owner: None,
+        name: Some("origin".into()),
+        full_name: None,
+        url: "https://github.com/acme/proj.git".into(),
+        normalized_url: "github.com/acme/proj".into(),
+        default_branch: Some("main".into()),
+        is_fork: false,
+        is_archived: false,
+        is_private: false,
+        pushed_at: Some(Utc::now()),
+    };
+    let r2 = RemoteRecord {
+        id: "rloc-2".into(),
+        provider: "local-git".into(),
+        owner: None,
+        name: Some("origin".into()),
+        full_name: None,
+        url: "git@github.com:acme/proj.git".into(),
+        normalized_url: "github.com/acme/proj".into(),
+        default_branch: Some("main".into()),
+        is_fork: false,
+        is_archived: false,
+        is_private: false,
+        pushed_at: Some(Utc::now()),
+    };
+    let snapshot = InventorySnapshot {
+        clones: vec![c1.clone(), c2.clone()],
+        remotes: vec![r1.clone(), r2.clone()],
+        links: vec![
+            CloneRemoteLink {
+                clone_id: c1.id.clone(),
+                remote_id: r1.id.clone(),
+                relationship: "origin".into(),
+            },
+            CloneRemoteLink {
+                clone_id: c2.id.clone(),
+                remote_id: r2.id.clone(),
+                relationship: "origin".into(),
+            },
+        ],
+        ..Default::default()
+    };
+
+    let plans = resolve_clusters(
+        &snapshot,
+        &PlanBuildOpts {
+            merge_base: false,
+            ..Default::default()
+        },
+    );
+    assert_eq!(plans.len(), 1);
+    assert!(plans[0].cluster.members.len() >= 4);
+}
+
+#[test]
 fn two_clones_linked_to_same_remote_form_one_cluster() {
     let c1 = sample_clone("clone-a", "proj-a");
     let c2 = sample_clone("clone-b", "proj-b");

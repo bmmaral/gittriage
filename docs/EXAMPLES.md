@@ -33,7 +33,8 @@ The `scores.oss_readiness` field is documented as **publish readiness** in repor
 ```bash
 gittriage explain cluster my-repo              # text
 gittriage explain cluster my-repo --format json
-gittriage explain cluster my-repo --ai         # add AI narrative (requires config)
+gittriage explain --ai cluster my-repo         # add AI narrative after deterministic block (flag is global)
+gittriage explain cluster my-repo --ai         # same
 ```
 
 ## Scoring profiles
@@ -72,5 +73,6 @@ vendor
 
 Core commands (`scan`, `score`, `plan`, `report`, `doctor`) are fully deterministic. No API keys are required.
 
-- `gittriage explain --ai` and `gittriage ai-summary` call user-configured OpenAI-compatible endpoints; they consume structured GitTriage output, not arbitrary repo trees (`docs/CLI.md`).
+- `gittriage explain --ai` and `gittriage ai-summary` call user-configured OpenAI-compatible endpoints when enabled; they consume structured GitTriage output, not arbitrary repo trees (`docs/CLI.md`).
+- If AI is off or no key is set, those commands still exit successfully and print a stderr note instead of failing.
 - AI output is clearly labeled as model-generated.

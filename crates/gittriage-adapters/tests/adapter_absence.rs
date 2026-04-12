@@ -36,6 +36,7 @@ fn make_plan(clone_id: &str, root_path: &str) -> (PlanDocument, InventorySnapsho
         }],
         remotes: vec![],
         links: vec![],
+        ..Default::default()
     };
 
     let plan = PlanDocument {
@@ -43,6 +44,7 @@ fn make_plan(clone_id: &str, root_path: &str) -> (PlanDocument, InventorySnapsho
         scoring_rules_version: 5,
         generated_at: Utc::now(),
         generated_by: "test".into(),
+        external_adapter_run: None,
         clusters: vec![ClusterPlan {
             cluster: ClusterRecord {
                 id: "cluster-1".into(),
@@ -98,12 +100,14 @@ fn no_canonical_clone_is_silently_skipped() {
         clones: vec![],
         remotes: vec![],
         links: vec![],
+        ..Default::default()
     };
     let mut plan = PlanDocument {
         schema_version: 1,
         scoring_rules_version: 5,
         generated_at: Utc::now(),
         generated_by: "test".into(),
+        external_adapter_run: None,
         clusters: vec![ClusterPlan {
             cluster: ClusterRecord {
                 id: "cluster-1".into(),
@@ -185,12 +189,14 @@ fn empty_plan_with_no_clusters_is_fine() {
         clones: vec![],
         remotes: vec![],
         links: vec![],
+        ..Default::default()
     };
     let mut plan = PlanDocument {
         schema_version: 1,
         scoring_rules_version: 5,
         generated_at: Utc::now(),
         generated_by: "test".into(),
+        external_adapter_run: None,
         clusters: vec![],
     };
 

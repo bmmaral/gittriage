@@ -2,7 +2,9 @@
 db_path = ".gittriage/state.db"
 default_roots = ["~/Projects", "~/code"]
 github_owner = "your-github-login"
+# github_owner_mode = "augment"   # "augment" (default) or "full_catalog" — see docs/CONFIG.md
 include_hidden = false
+# tui_export_path = "./gittriage-plan-tui-export.json"  # optional: path for TUI `o` export
 
 [scan]
 respect_gitignore = true
@@ -10,6 +12,7 @@ max_readme_bytes = 16384
 max_hash_files = 64
 # scan_mode = "git_only"    # "git_only" (default) or "project_roots"
 # max_depth = 5             # optional: limit directory traversal depth
+# include_nested_git = false  # true: also inventory nested .git dirs under a root (default false)
 
 [planner]
 archive_duplicate_threshold = 80
