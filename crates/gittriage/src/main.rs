@@ -14,11 +14,12 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Parser)]
 #[command(name = "gittriage")]
 #[command(
-    about = "Local-first repo fleet triage — inventory, cluster, score, plan.",
-    long_about = "GitTriage inventories your local git clones, ingests GitHub metadata, groups \
-    everything into clusters, scores them, and writes a deterministic plan — \
-    without touching your working trees.\n\n\
-    Golden path: scan → score → plan → report",
+    about = "Deterministic workspace-truth and preflight safety for coding agents.",
+    long_about = "GitTriage inventories local git checkouts, groups duplicates into clusters, picks a \
+    canonical path, and emits **automation verdicts** — so agents know which repo is real and when \
+    to stop for human review.\n\n\
+    Agent path: `preflight` / `resolve` / `check-path` / `verdict` → hand JSON to your agent.\n\
+    Human path: `scan` → `plan` → `report` / `tui`.",
     version,
     after_help = "Docs: https://github.com/bmmaral/gittriage/tree/main/docs"
 )]
@@ -33,6 +34,73 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Resolve a label, filesystem path, or remote URL to the canonical checkout (stable JSON for agents).
+    Resolve {
+        #[arg(value_name = "QUERY")]
+        query: String,
+        #[arg(long, default_value = "text")]
+        format: AgentOutputFormat,
+        #[arg(long)]
+        no_merge_base: bool,
+        #[arg(long)]
+        external: bool,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Automation safety verdict for a cluster (label / id / path / URL query).
+    Verdict {
+        #[arg(value_name = "TARGET")]
+        target: String,
+        #[arg(long, default_value = "text")]
+        format: AgentOutputFormat,
+        #[arg(long)]
+        no_merge_base: bool,
+        #[arg(long)]
+        external: bool,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Compact preflight manifest for a coding agent (canonical path, alternates, verdict, warnings).
+    Preflight {
+        #[arg(value_name = "TARGET")]
+        target: String,
+        #[arg(long, default_value = "text")]
+        format: AgentOutputFormat,
+        #[arg(long)]
+        no_merge_base: bool,
+        #[arg(long)]
+        external: bool,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Check if a path is the canonical clone or a wrong duplicate checkout.
+    CheckPath {
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        #[arg(long, default_value = "text")]
+        format: AgentOutputFormat,
+        #[arg(long)]
+        no_merge_base: bool,
+        #[arg(long)]
+        external: bool,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Token-light workspace summary for agents (`--agent`); duplicates, unsafe clusters, dirty canon.
+    Summary {
+        #[arg(long)]
+        agent: bool,
+        #[arg(value_name = "DIR")]
+        workspace: Vec<PathBuf>,
+        #[arg(long, default_value = "text")]
+        format: AgentOutputFormat,
+        #[arg(long)]
+        no_merge_base: bool,
+        #[arg(long)]
+        external: bool,
+        #[arg(long)]
+        profile: Option<String>,
+    },
     /// Discover local repos and optionally ingest GitHub metadata.
     Scan {
         /// Directories to scan for git repositories.
@@ -269,6 +337,12 @@ enum ApplyFormat {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AgentOutputFormat {
+    Text,
+    Json,
+}
+
 #[derive(Debug, Clone, ValueEnum)]
 enum ScoreFormat {
     /// One block per cluster: headline scores and evidence count.
@@ -323,6 +397,257 @@ fn plan_build_opts(bundle: &ConfigBundle, merge_base: bool) -> gittriage_plan::P
     }
 }
 
+fn build_fresh_plan(
+    db: &Database,
+    bundle: &ConfigBundle,
+    no_merge_base: bool,
+    external: bool,
+    profile: &Option<String>,
+) -> Result<(InventorySnapshot, gittriage_core::PlanDocument)> {
+    let snapshot = db.load_inventory()?;
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, !no_merge_base);
+    let mut plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+    }
+    Ok((snapshot, plan))
+}
+
+fn cmd_resolve(
+    db: &Database,
+    bundle: &ConfigBundle,
+    query: String,
+    format: AgentOutputFormat,
+    no_merge_base: bool,
+    external: bool,
+    profile: Option<String>,
+) -> Result<()> {
+    let (snap, plan) = build_fresh_plan(db, bundle, no_merge_base, external, &profile)?;
+    let out = gittriage_agent::resolve_target(&plan, &snap, &query);
+    match format {
+        AgentOutputFormat::Json => println!("{}", serde_json::to_string_pretty(&out)?),
+        AgentOutputFormat::Text => {
+            println!("gittriage resolve — workspace truth (computed from inventory)");
+            if let Some(ref e) = out.error {
+                println!("  error: {e}");
+                return Ok(());
+            }
+            println!("  query: {}", out.query);
+            println!(
+                "  canonical_path: {}",
+                out.canonical_path.as_deref().unwrap_or("(none)")
+            );
+            println!("  cluster_id: {}", out.cluster_id.as_deref().unwrap_or("—"));
+            println!("  label: {}", out.cluster_label.as_deref().unwrap_or("—"));
+            println!(
+                "  confidence: {}",
+                out.confidence
+                    .map(|c| format!("{c:.2}"))
+                    .unwrap_or_else(|| "—".into())
+            );
+            println!("  automation_verdict: {:?}", out.automation_verdict);
+            println!("  unsafe_for_automation: {}", out.unsafe_for_automation);
+            if !out.alternates.is_empty() {
+                println!("  alternates (do not edit for automation):");
+                for a in &out.alternates {
+                    println!("    - {a}");
+                }
+            }
+            if !out.blocking_reasons.is_empty() {
+                println!("  blocking_reasons:");
+                for b in &out.blocking_reasons {
+                    println!("    - {b}");
+                }
+            }
+            if !out.why_canonical.is_empty() {
+                println!("  why_canonical:");
+                for w in &out.why_canonical {
+                    println!("    - {w}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_verdict(
+    db: &Database,
+    bundle: &ConfigBundle,
+    target: String,
+    format: AgentOutputFormat,
+    no_merge_base: bool,
+    external: bool,
+    profile: Option<String>,
+) -> Result<()> {
+    let (snap, plan) = build_fresh_plan(db, bundle, no_merge_base, external, &profile)?;
+    let resolved = gittriage_agent::resolve_target(&plan, &snap, &target);
+    let cp = resolved
+        .cluster_id
+        .as_ref()
+        .and_then(|id| plan.clusters.iter().find(|c| c.cluster.id == *id));
+    let provenance = gittriage_agent::Provenance::from_snapshot(&snap);
+    let verdict = cp
+        .map(|c| gittriage_agent::automation_verdict_for_cluster(c, &snap))
+        .unwrap_or_else(|| {
+            gittriage_agent::automation_verdict_unresolved(
+                resolved
+                    .error
+                    .as_deref()
+                    .unwrap_or("Target did not resolve to a cluster."),
+            )
+        });
+    match format {
+        AgentOutputFormat::Json => {
+            let v = serde_json::json!({
+                "schema_version": 1u32,
+                "kind": "gittriage_verdict",
+                "generated_at": provenance.generated_at.to_rfc3339(),
+                "inventory_run_id": provenance.inventory_run_id,
+                "scope": provenance.scope,
+                "freshness": provenance.freshness,
+                "data_sources": provenance.data_sources,
+                "target": target,
+                "cluster_id": resolved.cluster_id,
+                "verdict": verdict,
+            });
+            println!("{}", serde_json::to_string_pretty(&v)?);
+        }
+        AgentOutputFormat::Text => {
+            println!("gittriage verdict — deterministic automation safety");
+            println!("  target: {target}");
+            if resolved.error.is_some() {
+                println!("  (could not resolve cluster — verdict is conservative block)");
+            }
+            println!("  safe_to_read: {}", verdict.safe_to_read);
+            println!("  safe_to_index: {}", verdict.safe_to_index);
+            println!("  safe_to_modify: {}", verdict.safe_to_modify);
+            println!("  safe_to_commit: {}", verdict.safe_to_commit);
+            println!("  safe_to_archive: {}", verdict.safe_to_archive);
+            println!("  human_review_required: {}", verdict.human_review_required);
+            println!(
+                "  unsafe_for_automation: {}  ({:?})",
+                verdict.unsafe_for_automation, verdict.automation_verdict
+            );
+            for b in &verdict.blocking_reasons {
+                println!("  - {b}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_preflight(
+    db: &Database,
+    bundle: &ConfigBundle,
+    target: String,
+    format: AgentOutputFormat,
+    no_merge_base: bool,
+    external: bool,
+    profile: Option<String>,
+) -> Result<()> {
+    let (snap, plan) = build_fresh_plan(db, bundle, no_merge_base, external, &profile)?;
+    let out = gittriage_agent::preflight(&plan, &snap, &target);
+    match format {
+        AgentOutputFormat::Json => println!("{}", serde_json::to_string_pretty(&out)?),
+        AgentOutputFormat::Text => {
+            println!("gittriage preflight — agent manifest");
+            println!("  target: {}", out.target);
+            println!(
+                "  canonical_path: {}",
+                out.canonical_path.as_deref().unwrap_or("(none)")
+            );
+            println!(
+                "  unsafe_for_automation: {}",
+                out.verdict.unsafe_for_automation
+            );
+            println!("  recommended_next_action: {}", out.recommended_next_action);
+            if !out.blocked_paths.is_empty() {
+                println!("  blocked_paths / alternates:");
+                for p in &out.blocked_paths {
+                    println!("    - {p}");
+                }
+            }
+            if !out.warnings.is_empty() {
+                println!("  warnings:");
+                for w in &out.warnings {
+                    println!("    - {w}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_check_path(
+    db: &Database,
+    bundle: &ConfigBundle,
+    path: PathBuf,
+    format: AgentOutputFormat,
+    no_merge_base: bool,
+    external: bool,
+    profile: Option<String>,
+) -> Result<()> {
+    let (snap, plan) = build_fresh_plan(db, bundle, no_merge_base, external, &profile)?;
+    let out = gittriage_agent::check_path(&plan, &snap, &path);
+    match format {
+        AgentOutputFormat::Json => println!("{}", serde_json::to_string_pretty(&out)?),
+        AgentOutputFormat::Text => {
+            println!("gittriage check-path — wrong-clone detection");
+            println!("  path: {}", out.path);
+            println!("  disposition: {:?}", out.disposition);
+            println!("  is_wrong_clone: {}", out.is_wrong_clone);
+            println!(
+                "  canonical_path: {}",
+                out.canonical_path.as_deref().unwrap_or("(none)")
+            );
+            println!("  {}", out.guidance);
+            println!(
+                "  unsafe_for_automation: {}",
+                out.verdict.unsafe_for_automation
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_summary_agent(
+    db: &Database,
+    bundle: &ConfigBundle,
+    agent: bool,
+    workspace: Vec<PathBuf>,
+    format: AgentOutputFormat,
+    no_merge_base: bool,
+    external: bool,
+    profile: Option<String>,
+) -> Result<()> {
+    anyhow::ensure!(
+        agent,
+        "`gittriage summary` requires `--agent` (compact deterministic rollup for coding agents)"
+    );
+    let (snap, plan) = build_fresh_plan(db, bundle, no_merge_base, external, &profile)?;
+    let out = gittriage_agent::agent_summary(&plan, &snap, &workspace);
+    match format {
+        AgentOutputFormat::Json => println!("{}", serde_json::to_string_pretty(&out)?),
+        AgentOutputFormat::Text => {
+            println!("gittriage summary --agent");
+            println!(
+                "  clusters_considered: {}  unsafe_for_automation: {}",
+                out.total_clusters_considered, out.total_unsafe_for_automation
+            );
+            println!("  canonical_paths: {}", out.canonical_paths.len());
+            println!("  duplicate_groups: {}", out.duplicate_groups.len());
+            if !out.nested_repo_warnings.is_empty() {
+                println!("  nested_repo_warnings: {}", out.nested_repo_warnings.len());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
@@ -333,6 +658,75 @@ fn main() -> Result<()> {
     let mut db = Database::open(&bundle.effective_db_path)?;
 
     match cli.command {
+        Commands::Resolve {
+            query,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        } => cmd_resolve(
+            &db,
+            &bundle,
+            query,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        ),
+        Commands::Verdict {
+            target,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        } => cmd_verdict(
+            &db,
+            &bundle,
+            target,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        ),
+        Commands::Preflight {
+            target,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        } => cmd_preflight(
+            &db,
+            &bundle,
+            target,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        ),
+        Commands::CheckPath {
+            path,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        } => cmd_check_path(&db, &bundle, path, format, no_merge_base, external, profile),
+        Commands::Summary {
+            agent,
+            workspace,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        } => cmd_summary_agent(
+            &db,
+            &bundle,
+            agent,
+            workspace,
+            format,
+            no_merge_base,
+            external,
+            profile,
+        ),
         Commands::Scan {
             roots,
             github_owner,
@@ -1048,6 +1442,7 @@ fn cmd_report(
         .unwrap_or_default();
     match format {
         ReportFormat::Md => {
+            let agent_headings = scope_filter.is_none();
             let md = gittriage_report::render_markdown_with(
                 &display_plan,
                 gittriage_report::ReportExtras {
@@ -1061,6 +1456,9 @@ fn cmd_report(
                     latest_scan_started_at: snapshot.run.as_ref().map(|r| r.started_at),
                     sqlite_persisted: Some((n_persist, persist_at)),
                     skipped_nested_git_paths: skipped_nested,
+                    inventory_snapshot: agent_headings.then(|| snapshot.clone()),
+                    agent_section_plan: agent_headings.then(|| full_plan.clone()),
+                    agent_preflight_headings: agent_headings,
                 },
             )?;
             println!("{md}");
@@ -1104,6 +1502,7 @@ fn cmd_tui(
         .unwrap_or_default();
     gittriage_tui::run(
         plan,
+        snapshot,
         gittriage_tui::TuiConfig {
             config_pins,
             export_path,

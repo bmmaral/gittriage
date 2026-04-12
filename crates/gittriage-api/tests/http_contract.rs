@@ -100,3 +100,151 @@ async fn unknown_route_404() {
         .expect("oneshot");
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// `/v2/agent/*` — stable machine-facing surface (empty inventory still returns JSON).
+#[tokio::test]
+async fn v2_agent_resolve_ok_shape() {
+    let (_dir, state) = test_state();
+    let app = router(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/v2/agent/resolve?query=foo")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["kind"], "gittriage_resolve");
+    assert_eq!(v["query"], "foo");
+    assert!(v.get("generated_at").is_some());
+    assert!(v.get("freshness").is_some());
+    assert!(v.get("unsafe_for_automation").is_some());
+}
+
+#[tokio::test]
+async fn v2_agent_verdict_ok_shape() {
+    let (_dir, state) = test_state();
+    let app = router(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/v2/agent/verdict?target=bar")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["kind"], "gittriage_verdict");
+    assert_eq!(v["target"], "bar");
+    assert!(v.get("verdict").is_some());
+    assert!(v["verdict"].get("unsafe_for_automation").is_some());
+}
+
+#[tokio::test]
+async fn v2_agent_preflight_ok_shape() {
+    let (_dir, state) = test_state();
+    let app = router(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/v2/agent/preflight?target=baz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["kind"], "gittriage_preflight");
+    // `AutomationVerdict` is flattened into the preflight document.
+    assert!(v.get("unsafe_for_automation").is_some());
+    assert!(v.get("automation_verdict").is_some());
+}
+
+#[tokio::test]
+async fn v2_agent_check_path_ok_shape() {
+    let (_dir, state) = test_state();
+    let app = router(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/v2/agent/check-path?path=/tmp")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["kind"], "gittriage_check_path");
+    assert!(v.get("disposition").is_some());
+}
+
+#[tokio::test]
+async fn v2_agent_summary_ok_shape() {
+    let (_dir, state) = test_state();
+    let app = router(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/v2/agent/summary")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["kind"], "gittriage_agent_summary");
+}
+
+#[tokio::test]
+async fn v2_agent_duplicate_groups_ok_shape() {
+    let (_dir, state) = test_state();
+    let app = router(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/v2/agent/duplicate-groups")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["kind"], "gittriage_duplicate_groups");
+    assert!(v["groups"].is_array());
+}
+
+#[tokio::test]
+async fn v2_agent_unsafe_targets_ok_shape() {
+    let (_dir, state) = test_state();
+    let app = router(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/v2/agent/unsafe-targets")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot");
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["kind"], "gittriage_unsafe_targets");
+    assert!(v["targets"].is_array());
+}

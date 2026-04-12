@@ -3,7 +3,10 @@
 
 use anyhow::{bail, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use gittriage_core::{ActionType, ClusterPlan, ClusterStatus, MemberKind, PlanDocument, Priority};
+use gittriage_core::{
+    ActionType, ClusterPlan, ClusterScope, ClusterStatus, InventorySnapshot, MemberKind,
+    PlanDocument, Priority,
+};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -108,6 +111,36 @@ enum SortKey {
     StatusAmbiguousFirst,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClusterView {
+    All,
+    SafeAuto,
+    UnsafeAuto,
+    Duplicates,
+    LocalOnly,
+}
+
+impl ClusterView {
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::SafeAuto,
+            Self::SafeAuto => Self::UnsafeAuto,
+            Self::UnsafeAuto => Self::Duplicates,
+            Self::Duplicates => Self::LocalOnly,
+            Self::LocalOnly => Self::All,
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::SafeAuto => "safe",
+            Self::UnsafeAuto => "unsafe",
+            Self::Duplicates => "dups",
+            Self::LocalOnly => "local",
+        }
+    }
+}
+
 impl SortKey {
     fn next(self) -> Self {
         match self {
@@ -164,18 +197,23 @@ pub struct TuiConfig {
     pub skipped_nested_git_paths: Vec<String>,
 }
 
-pub fn run(plan: PlanDocument, config: TuiConfig) -> Result<()> {
+pub fn run(plan: PlanDocument, snapshot: InventorySnapshot, config: TuiConfig) -> Result<()> {
     if !io::stdout().is_terminal() {
         bail!("`gittriage tui` requires an interactive terminal (stdout is not a TTY)");
     }
     let mut terminal = ratatui::try_init().map_err(|e| anyhow::anyhow!(e))?;
-    let res = run_inner(&mut terminal, plan, config);
+    let res = run_inner(&mut terminal, plan, snapshot, config);
     let _ = ratatui::try_restore();
     res
 }
 
-fn run_inner(terminal: &mut DefaultTerminal, plan: PlanDocument, config: TuiConfig) -> Result<()> {
-    let mut app = App::new(plan, config);
+fn run_inner(
+    terminal: &mut DefaultTerminal,
+    plan: PlanDocument,
+    snapshot: InventorySnapshot,
+    config: TuiConfig,
+) -> Result<()> {
+    let mut app = App::new(plan, snapshot, config);
     loop {
         terminal
             .draw(|f| app.render(f))
@@ -195,8 +233,10 @@ fn run_inner(terminal: &mut DefaultTerminal, plan: PlanDocument, config: TuiConf
 // ── App state ────────────────────────────────────────────────────────────────
 struct App {
     plan: PlanDocument,
+    snapshot: InventorySnapshot,
     config: TuiConfig,
     sort: SortKey,
+    cluster_view: ClusterView,
     filter_applied: String,
     filter_editing: bool,
     filter_buffer: String,
@@ -218,7 +258,7 @@ struct EvidenceLine {
 }
 
 impl App {
-    fn new(plan: PlanDocument, config: TuiConfig) -> Self {
+    fn new(plan: PlanDocument, snapshot: InventorySnapshot, config: TuiConfig) -> Self {
         let status_msg = if config.skipped_nested_git_paths.is_empty() {
             String::new()
         } else {
@@ -229,8 +269,10 @@ impl App {
         };
         let mut s = Self {
             plan,
+            snapshot,
             config,
             sort: SortKey::Label,
+            cluster_view: ClusterView::All,
             filter_applied: String::new(),
             filter_editing: false,
             filter_buffer: String::new(),
@@ -247,6 +289,26 @@ impl App {
         s
     }
 
+    fn passes_cluster_view(&self, i: usize) -> bool {
+        let cp = &self.plan.clusters[i];
+        let v = gittriage_agent::automation_verdict_for_cluster(cp, &self.snapshot);
+        let n_clones = cp
+            .cluster
+            .members
+            .iter()
+            .filter(|m| m.kind == MemberKind::Clone)
+            .count();
+        match self.cluster_view {
+            ClusterView::All => true,
+            ClusterView::SafeAuto => !v.unsafe_for_automation,
+            ClusterView::UnsafeAuto => v.unsafe_for_automation,
+            ClusterView::Duplicates => n_clones > 1,
+            ClusterView::LocalOnly => {
+                matches!(cp.cluster.cluster_scope(), ClusterScope::LocalOnly)
+            }
+        }
+    }
+
     fn rebuild_ordered(&mut self) {
         let n = self.plan.clusters.len();
         let needle = self.filter_applied.to_lowercase();
@@ -257,6 +319,9 @@ impl App {
                     Some(f) => f.matches(self.plan.clusters[i].cluster.cluster_scope()),
                 };
                 if !scope_ok {
+                    return false;
+                }
+                if !self.passes_cluster_view(i) {
                     return false;
                 }
                 if needle.is_empty() {
@@ -498,7 +563,7 @@ impl App {
 
     fn render_cluster_table(&mut self, f: &mut Frame, area: Rect) {
         let header_cells = [
-            " Label", "Canon", "Health", "Recov", "Pub", "Risk", "Ev", "Act", "Status",
+            " Label", "Auto", "Canon", "Hlth", "Recv", "Pub", "Risk", "Ev", "Act", "St",
         ]
         .into_iter()
         .map(|h| Cell::from(h).style(Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)));
@@ -510,6 +575,15 @@ impl App {
             .map(|&idx| {
                 let cp = &self.plan.clusters[idx];
                 let c = &cp.cluster;
+                let av = gittriage_agent::automation_verdict_for_cluster(cp, &self.snapshot);
+                let (auto_txt, auto_color) = match av.automation_verdict {
+                    gittriage_agent::AutomationVerdictLabel::Safe => (" OK ", STATUS_OK),
+                    gittriage_agent::AutomationVerdictLabel::Caution => ("CAUT", STATUS_AMB),
+                    gittriage_agent::AutomationVerdictLabel::HumanReviewRequired => {
+                        ("HUMAN", STATUS_REV)
+                    }
+                    gittriage_agent::AutomationVerdictLabel::Blocked => ("BLOCK", STATUS_REV),
+                };
                 let is_pinned = c
                     .canonical_clone_id
                     .as_ref()
@@ -530,6 +604,7 @@ impl App {
 
                 Row::new(vec![
                     Cell::from(label_text).style(Style::new().fg(FG)),
+                    Cell::from(auto_txt).style(Style::new().fg(auto_color)),
                     Cell::from(format!("{:>4.0}", c.scores.canonical))
                         .style(Style::new().fg(score_color(c.scores.canonical))),
                     Cell::from(format!("{:>4.0}", c.scores.usability))
@@ -553,11 +628,13 @@ impl App {
             format!("  filter: \"{}\"", self.filter_applied)
         };
 
+        let view_hint = format!("  view:{} ", self.cluster_view.label());
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style())
             .title(Line::from(vec![
                 Span::styled(" Clusters ", title_style()),
+                Span::styled(view_hint, Style::new().fg(Color::Magenta)),
                 Span::styled(filter_hint, Style::new().fg(Color::Yellow)),
                 Span::raw(" "),
             ]));
@@ -565,15 +642,16 @@ impl App {
         let table = Table::new(
             rows,
             [
-                Constraint::Min(26),
+                Constraint::Min(22),
                 Constraint::Length(5),
-                Constraint::Length(6),
-                Constraint::Length(6),
+                Constraint::Length(5),
                 Constraint::Length(5),
                 Constraint::Length(5),
                 Constraint::Length(4),
                 Constraint::Length(4),
-                Constraint::Length(6),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(5),
             ],
         )
         .header(header)
@@ -651,6 +729,19 @@ impl App {
         };
 
         let c = &cp.cluster;
+        let av = gittriage_agent::automation_verdict_for_cluster(cp, &self.snapshot);
+        let canon_fs = c
+            .canonical_clone_id
+            .as_ref()
+            .and_then(|id| self.snapshot.clones.iter().find(|cl| cl.id == *id))
+            .map(|cl| cl.path.as_str())
+            .unwrap_or("—");
+        let n_clones = c
+            .members
+            .iter()
+            .filter(|m| m.kind == MemberKind::Clone)
+            .count();
+
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
@@ -672,6 +763,29 @@ impl App {
                         SCORE_LOW
                     }),
                 ),
+            ]),
+            Line::from(vec![
+                Span::styled("auto      ", dim()),
+                Span::styled(
+                    format!("{:?}", av.automation_verdict),
+                    if av.unsafe_for_automation {
+                        STATUS_REV
+                    } else {
+                        STATUS_OK
+                    },
+                ),
+                Span::styled(
+                    if av.unsafe_for_automation {
+                        "  (unsafe for automation)"
+                    } else {
+                        ""
+                    },
+                    dim(),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("path      ", dim()),
+                Span::styled(canon_fs, Style::new().fg(FG)),
             ]),
             Line::from(vec![
                 Span::styled("canonical ", dim()),
@@ -707,6 +821,15 @@ impl App {
                 Span::styled("  (press e)", dim()),
             ]),
         ];
+        if n_clones > 1 {
+            meta.push(Line::from(vec![
+                Span::styled("dupes     ", dim()),
+                Span::styled(
+                    "Multiple local checkouts — agents should use canonical path only",
+                    STATUS_AMB,
+                ),
+            ]));
+        }
 
         // Top evidence hints (first 3)
         if !c.evidence.is_empty() {
@@ -913,6 +1036,10 @@ impl App {
             ("G", "Jump to bottom"),
             ("PgUp / PgDn", "Page up / down"),
             ("s", "Cycle sort mode"),
+            (
+                "v",
+                "Cycle cluster view (all / safe / unsafe / dups / local)",
+            ),
             ("/", "Edit filter (Enter apply, Esc cancel)"),
             ("f", "Clear filter"),
             ("Tab", "Toggle Detail ↔ Actions panel"),
@@ -958,6 +1085,10 @@ impl App {
             ]));
         }
         lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Auto column: deterministic automation verdict (OK / CAUT / HUMAN / BLOCK).",
+            dim(),
+        )));
         lines.push(Line::from(Span::styled(
             "  Not a dashboard. No charts, no services, no mutation.",
             dim(),
@@ -1097,6 +1228,11 @@ impl App {
                 self.rebuild_ordered();
                 self.status_msg = format!("Sort: {}", self.sort.label());
             }
+            KeyCode::Char('v') => {
+                self.cluster_view = self.cluster_view.next();
+                self.rebuild_ordered();
+                self.status_msg = format!("Cluster view: {} (v cycles)", self.cluster_view.label());
+            }
             KeyCode::Char('/') => {
                 self.filter_editing = true;
                 self.filter_buffer = self.filter_applied.clone();
@@ -1222,7 +1358,13 @@ fn centered_pct(area: Rect, w_pct: u16, h_pct: u16) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gittriage_core::{ClusterRecord, ClusterStatus, EvidenceItem, MemberKind, ScoreBundle};
+    use gittriage_core::{
+        ClusterRecord, ClusterStatus, EvidenceItem, InventorySnapshot, MemberKind, ScoreBundle,
+    };
+
+    fn empty_snap() -> InventorySnapshot {
+        InventorySnapshot::default()
+    }
 
     fn dummy_cluster_plan(
         label: &str,
@@ -1272,6 +1414,7 @@ mod tests {
         ]);
         let mut app = App::new(
             plan,
+            empty_snap(),
             TuiConfig {
                 config_pins: HashSet::new(),
                 export_path: PathBuf::from("gittriage-tui-test-export.json"),
@@ -1293,6 +1436,7 @@ mod tests {
         let plan = dummy_plan(vec![a, b]);
         let mut app = App::new(
             plan,
+            empty_snap(),
             TuiConfig {
                 config_pins: HashSet::new(),
                 export_path: PathBuf::from("gittriage-tui-test-export.json"),
@@ -1314,6 +1458,7 @@ mod tests {
         ]);
         let mut app = App::new(
             plan,
+            empty_snap(),
             TuiConfig {
                 config_pins: HashSet::new(),
                 export_path: PathBuf::from("gittriage-tui-test-export.json"),
@@ -1334,6 +1479,7 @@ mod tests {
         ]);
         let mut app = App::new(
             plan,
+            empty_snap(),
             TuiConfig {
                 config_pins: HashSet::new(),
                 export_path: PathBuf::from("gittriage-tui-test-export.json"),
@@ -1361,6 +1507,7 @@ mod tests {
         let plan = dummy_plan(vec![cp]);
         let mut app = App::new(
             plan,
+            empty_snap(),
             TuiConfig {
                 config_pins: HashSet::new(),
                 export_path: PathBuf::from("gittriage-tui-test-export.json"),
@@ -1393,6 +1540,7 @@ mod tests {
         let plan = dummy_plan(vec![cp]);
         let app = App::new(
             plan,
+            empty_snap(),
             TuiConfig {
                 config_pins: HashSet::new(),
                 export_path: PathBuf::from("gittriage-tui-test-export.json"),

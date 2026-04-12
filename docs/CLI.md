@@ -1,8 +1,22 @@
 # CLI
 
+## Agent / coding-agent commands
+
+Deterministic **workspace truth** and **automation verdicts** for scripts and coding agents. All share `--format text|json`, `--no-merge-base`, `--external`, and `--profile` (same meaning as `plan` / `score`). JSON responses include **provenance**: `generated_at`, `inventory_run_id`, `scope`, `freshness`, `data_sources` where applicable.
+
+| Command | Purpose |
+| --- | --- |
+| `preflight <TARGET>` | Compact manifest: `canonical_path`, `repo_root`, alternates as `blocked_paths` / `ignored_alternates`, `warnings`, flattened `AutomationVerdict` (`safe_to_*`, `unsafe_for_automation`, `blocking_reasons`), `recommended_next_action` |
+| `resolve <QUERY>` | Resolve label, filesystem path, or remote URL → `canonical_path`, `cluster_id`, `alternates`, `confidence`, `automation_verdict`, `why_canonical`, `unsafe_for_automation` |
+| `verdict <TARGET>` | Full `AutomationVerdict` for the resolved cluster (conservative block if the target does not resolve) |
+| `check-path <PATH>` | Wrong-clone check: disposition vs canonical, guidance for non-canonical paths |
+| `summary --agent [DIR]…` | Token-light rollup: duplicate groups, unsafe targets, canonical paths, dirty canonical checkouts, nested warnings, counts (`--agent` required) |
+
+The read-only HTTP API mirrors these under **`GET /v2/agent/*`** (see `gittriage serve` below).
+
 ## Stable core
 
-These commands are the **stable surface** for repo fleet triage (names and primary flags remain compatible in v1.x):
+These commands are the **stable surface** for local git workspace triage (names and primary flags remain compatible in v1.x):
 
 | Command | Purpose |
 | --- | --- |
@@ -14,22 +28,22 @@ These commands are the **stable surface** for repo fleet triage (names and prima
 | `tools` | Optional external adapters on `PATH` (`--format json` for scripts) |
 | `export` | JSON envelope with `inventory` (optional `--with-plan`) for backup or transfer |
 | `import` | Replace DB inventory from export JSON (clears persisted plan); requires `--force` |
-| `explain` | One cluster’s scores, evidence, and actions (by cluster query or clone/remote id); optional `--ai` narrative |
+| `explain` | One cluster’s scores, evidence, and actions (by cluster query or clone/remote id); optional `--ai` narrative (non-deterministic) |
 | `ai-doctor` | Print AI config status; optional `--probe-network` to GET `{api_base}/models` |
 
 **Secondary (shipped, real)**
 
 | Command | Purpose |
 | --- | --- |
-| `tui` | Interactive terminal table over the current plan (sort/filter, evidence, pin hint, export JSON); read-only |
+| `tui` | Interactive terminal table over the current plan; **Auto** column (automation verdict), canonical path in details; `v` cycles views (all / safe / unsafe / duplicates / local-only) |
 
 **Experimental**
 
 | Command | Purpose |
 | --- | --- |
-| `ai-summary` | AI-generated executive summary of the full plan (requires `ai.enabled = true` + API key) |
+| `ai-summary` | Optional AI-generated narrative over the full plan (not deterministic; requires AI config + key) |
 | `apply --dry-run` / `preview` | Read-only preview: counts clusters and proposed actions (`--format json` supported). Mutating apply is not implemented. |
-| `serve` | Read-only JSON over local SQLite for scripting. Not a dashboard, not multi-user, unstable API until release notes say otherwise. |
+| `serve` | Read-only JSON over local SQLite. **`/v1/*`** inventory/plan; **`/v2/agent/*`** agent operations (versioned contract; see below). |
 
 New subcommands may be added alongside the core without removing these in v1.x.
 
@@ -52,6 +66,13 @@ The **`[scan]`** table controls scanning behavior: `scan_mode` (`git_only` defau
 Top-level **`github_owner_mode`** (`augment` default, `full_catalog`) controls how `github_owner` ingest combines with local remotes: `augment` keeps only GitHub repos whose URL matches a local-git remote from the scan; `full_catalog` ingests the full `gh repo list` for the owner. Override per run with `gittriage scan --github-owner-mode …`.
 
 Optional **`tui_export_path`** sets the file written when pressing `o` in the TUI; if unset, a timestamped `gittriage-plan-tui-export-*.json` in the current directory is used.
+
+### Git workspaces vs manifest-only discovery
+
+- **`scan_mode = "git_only"` (default)** — Inventory is built from real `.git` directories (and worktrees). This is the path **`preflight` / `resolve` / `check-path` / `verdict`** assume: canonical paths point at actual git checkouts, and duplicate/nested semantics refer to inventoried clones.
+- **`scan_mode = "project_roots"`** — Walk uses manifest / project-root heuristics (lockfiles, etc.). Treat this as **secondary**: clusters may not map cleanly to “the one true git repo” for an agent. Prefer `git_only` for coding-agent safety; use `project_roots` when you explicitly want broader directory cues, and still validate paths with `check-path` before automation.
+
+See `gittriage.toml.example` (`[scan] scan_mode`) and `docs/CONFIG.md` for field details.
 
 The **`[planner]`** table drives planning: ambiguity cutoff (`ambiguous_cluster_threshold`), when to suggest archiving duplicates vs canonical strength (`archive_duplicate_threshold`), publish-hygiene actions vs `oss_readiness` (`oss_candidate_threshold`), optional **`canonical_pins`** (clone ids), **`ignored_cluster_keys`** / **`archive_hint_cluster_keys`** (exact `cluster_key` from JSON output), and optional **`scoring_profile`** (`docs/SCORING_PROFILES.md`). The `--profile` flag on `score`, `plan`, `report`, and `explain` overrides the config value. `serve` loads config once at startup.
 
@@ -112,7 +133,7 @@ Render markdown or JSON reports from the current inventory. The plan is **always
 - Markdown header also includes: **Local triage focus** (how many clusters involve a local checkout), latest inventory scan time (when present), SQLite persisted-plan row count / timestamp (and a note when `scan` cleared rows or the persisted plan predates the latest scan), and optional `## Skipped nested git repositories` from the last scan’s `runs.stats_json`.
 - When there is no scope filter and the plan mixes local-involved clusters with remote-only clusters, markdown may split body sections into **Clusters with local checkouts** and **Remote-only clusters**.
 
-**Stable markdown sections (in order):** top-level title `GitTriage Report`, run metadata bullets, optional `## Skipped nested git repositories`, optional `## Warnings` (ambiguous / low-confidence clusters), then per cluster: `## {label}`, cluster metadata bullets (including **Member scope**), `### Scores`, `### Score explanations`, `### Evidence`, `### Actions`. Tools that parse reports should key off these headings.
+**Stable markdown sections (in order):** top-level title `GitTriage Report`, run metadata bullets. For **unscoped** markdown reports, **agent-preflight sections** are inserted next: `## Unsafe for automation`, `## Duplicate groups`, `## Canonical repo paths`, `## Dirty canonical checkouts`, `## Nested / scan gaps`, then optional `## Skipped nested git repositories`, optional `## Warnings` (ambiguous / low-confidence clusters), then per cluster: `## {label}`, cluster metadata bullets (including **Member scope**), **`### Scores (summary)`** (one line + pointer to `explain` / `score` — not the long narrative), `### Evidence`, `### Actions`. **Scoped** reports (`--scope …`) omit agent-preflight blocks and keep the classic **`### Scores`** plus **`### Score explanations`** under each cluster. Tools that parse reports should key off these headings.
 
 Example:
 
@@ -156,7 +177,7 @@ gittriage apply --dry-run --format json
 
 Read-only HTTP JSON API (requires a configured/openable SQLite DB). Intended for **local** inspection only; not a web product. Config is loaded once at startup (not per-request).
 
-**Stability:** treat this API as **experimental**. Within a given **minor** release (e.g. `0.1.x`), route paths and the top-level JSON keys exercised by the in-repo contract tests (`gittriage-api` integration tests for `/health`, `/v1/inventory`, `/v1/plan`) are intended to remain compatible; field additions inside JSON objects are allowed. Breaking path or top-level shape changes will be called out in release notes when the API is promoted beyond experimental.
+**Stability:** treat **`/v1/*`** as **experimental** (same rules as before: contract tests lock top-level keys for `/health`, `/v1/inventory`, `/v1/plan`). **`/v2/agent/*`** is the **versioned agent surface**: paths and the `kind` / `schema_version` fields are treated as stable within `0.1.x`; new JSON fields may be added. Breaking changes will be called out in release notes.
 
 - `--port <PORT>` — listen port (default: 3030).
 - `--listen <IP>` — bind address (default: `127.0.0.1`; use `0.0.0.0` for network access).
@@ -165,6 +186,16 @@ Routes (all `GET`, JSON bodies):
 - `/health` — `{"ok": true, "service": "gittriage-api", "version": "<crate semver>"}` (service liveness).
 - `/v1/inventory` — `{"clones": N, "remotes": N, "links": N}` (lightweight counts).
 - `/v1/plan` — full plan document (recomputed from inventory using startup config; same shape as `plan --write`, including optional `external_adapter_run` when last built with adapters).
+
+**`/v2/agent/*`** (query parameters):
+
+- `/v2/agent/resolve?query=<label|path|url>` — same shape as CLI `resolve` (`kind: "gittriage_resolve"`).
+- `/v2/agent/verdict?target=<QUERY>` — `kind: "gittriage_verdict"` plus embedded `verdict` object.
+- `/v2/agent/preflight?target=<QUERY>` — same shape as CLI `preflight` (`kind: "gittriage_preflight"`; verdict fields flattened).
+- `/v2/agent/check-path?path=<PATH>` — `kind: "gittriage_check_path"`.
+- `/v2/agent/summary` — optional repeated `workspace=<DIR>` query params; `kind: "gittriage_agent_summary"`.
+- `/v2/agent/duplicate-groups` — optional `workspace` params; `kind: "gittriage_duplicate_groups"`.
+- `/v2/agent/unsafe-targets` — optional `workspace` params; `kind: "gittriage_unsafe_targets"`.
 
 Example:
 

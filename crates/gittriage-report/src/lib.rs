@@ -1,7 +1,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use gittriage_core::{
-    ClusterPlan, ClusterRecord, ClusterScope, ClusterScopeFilter, ClusterStatus, PlanDocument,
+    ClusterPlan, ClusterRecord, ClusterScope, ClusterScopeFilter, ClusterStatus, InventorySnapshot,
+    PlanDocument,
 };
 
 /// Backward-compatible alias ([`ClusterScopeFilter`]).
@@ -23,6 +24,13 @@ pub struct ReportExtras {
     /// When `None`, omit SQLite persistence lines (library-only / tests). When `Some`, document DB plan rows.
     pub sqlite_persisted: Option<(u64, Option<DateTime<Utc>>)>,
     pub skipped_nested_git_paths: Vec<String>,
+    /// Inventory for agent-first sections (clone paths, dirty flags).
+    pub inventory_snapshot: Option<InventorySnapshot>,
+    /// Full plan for agent rollup (use when markdown body is scope-filtered).
+    pub agent_section_plan: Option<PlanDocument>,
+    /// Lead with unsafe clusters, duplicates, and canonical map (agent-oriented report).
+    /// When true, per-cluster markdown uses **`### Scores (summary)`** only (no long score-narrative block); use `explain` / `score` for full axis copy.
+    pub agent_preflight_headings: bool,
 }
 
 /// Count clusters by [`ClusterScope`] (member-kind buckets).
@@ -153,6 +161,17 @@ pub fn render_markdown_with(plan: &PlanDocument, extras: ReportExtras) -> Result
 
     out.push('\n');
 
+    if extras.agent_preflight_headings {
+        if let (Some(ref inv), Some(ref ap)) = (
+            extras.inventory_snapshot.as_ref(),
+            extras.agent_section_plan.as_ref(),
+        ) {
+            render_agent_preflight_sections(&mut out, ap, inv);
+        } else if let Some(ref inv) = extras.inventory_snapshot {
+            render_agent_preflight_sections(&mut out, plan, inv);
+        }
+    }
+
     render_skipped_nested_section(&mut out, &extras.skipped_nested_git_paths);
     render_plan_warnings(&mut out, plan);
 
@@ -160,6 +179,7 @@ pub fn render_markdown_with(plan: &PlanDocument, extras: ReportExtras) -> Result
         && extras.scope_filter.is_none()
         && should_split_local_sections(plan);
 
+    let demote_scoring = extras.agent_preflight_headings;
     if use_sections {
         let (local, remote, empty) = partition_by_scope(plan);
         out.push_str("## Clusters with local checkouts\n\n");
@@ -167,7 +187,7 @@ pub fn render_markdown_with(plan: &PlanDocument, extras: ReportExtras) -> Result
             "_These clusters include at least one inventoried local clone — prioritize for filesystem cleanup._\n\n",
         );
         for cp in local {
-            render_cluster(&mut out, cp);
+            render_cluster(&mut out, cp, demote_scoring);
         }
         if !remote.is_empty() {
             out.push_str("## Remote-only clusters\n\n");
@@ -175,18 +195,18 @@ pub fn render_markdown_with(plan: &PlanDocument, extras: ReportExtras) -> Result
                 "_No local clone in this cluster (GitHub/catalog rows only). Lower priority for local disk cleanup._\n\n",
             );
             for cp in remote {
-                render_cluster(&mut out, cp);
+                render_cluster(&mut out, cp, demote_scoring);
             }
         }
         if !empty.is_empty() {
             out.push_str("## Clusters with no members\n\n");
             for cp in empty {
-                render_cluster(&mut out, cp);
+                render_cluster(&mut out, cp, demote_scoring);
             }
         }
     } else {
         for cluster_plan in &plan.clusters {
-            render_cluster(&mut out, cluster_plan);
+            render_cluster(&mut out, cluster_plan, demote_scoring);
         }
     }
 
@@ -239,6 +259,82 @@ fn scope_filter_label(f: ClusterScopeFilter) -> &'static str {
     }
 }
 
+fn render_agent_preflight_sections(
+    out: &mut String,
+    plan: &PlanDocument,
+    snapshot: &InventorySnapshot,
+) {
+    let sum = gittriage_agent::agent_summary(plan, snapshot, &[]);
+
+    out.push_str("## Unsafe for automation\n\n");
+    out.push_str(
+        "_**Unsafe for automation** — do not let coding agents mutate repos here until a human reviews (see `gittriage verdict` / `preflight`)._\n\n",
+    );
+    if sum.unsafe_targets.is_empty() {
+        out.push_str("_No clusters flagged — still run `gittriage preflight <target>` before agent edits._\n\n");
+    } else {
+        for u in &sum.unsafe_targets {
+            out.push_str(&format!(
+                "- **{}** (`{}`): {}\n",
+                u.label, u.cluster_id, u.reason
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Duplicate groups\n\n");
+    if sum.duplicate_groups.is_empty() {
+        out.push_str("_No multi-checkout duplicate groups in inventory._\n\n");
+    } else {
+        for d in &sum.duplicate_groups {
+            let canon = d.canonical_path.as_deref().unwrap_or("(unknown)");
+            let alts = if d.alternate_paths.is_empty() {
+                "—".into()
+            } else {
+                d.alternate_paths.join("`, `")
+            };
+            out.push_str(&format!(
+                "- **{}** (`{}`) — canonical: `{}`; other checkouts: `{}`\n",
+                d.label, d.cluster_id, canon, alts
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Canonical repo paths\n\n");
+    if sum.canonical_paths.is_empty() {
+        out.push_str("_None resolved._\n\n");
+    } else {
+        for p in &sum.canonical_paths {
+            out.push_str(&format!("- `{}`\n", p));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Dirty canonical checkouts\n\n");
+    if sum.dirty_canonical_repos.is_empty() {
+        out.push_str("_None recorded as dirty on canonical clones._\n\n");
+    } else {
+        for d in &sum.dirty_canonical_repos {
+            out.push_str(&format!("- **{}** — `{}`\n", d.cluster_id, d.path));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## Nested / scan gaps\n\n");
+    if sum.nested_repo_warnings.is_empty() {
+        out.push_str("_No nested-git skips recorded on the latest scan._\n\n");
+    } else {
+        for p in &sum.nested_repo_warnings {
+            out.push_str(&format!(
+                "- `{}` (enable `scan.include_nested_git` to inventory)\n",
+                p
+            ));
+        }
+        out.push('\n');
+    }
+}
+
 fn render_skipped_nested_section(out: &mut String, paths: &[String]) {
     if paths.is_empty() {
         return;
@@ -286,7 +382,7 @@ fn render_plan_warnings(out: &mut String, plan: &PlanDocument) {
     out.push('\n');
 }
 
-fn render_cluster(out: &mut String, cluster_plan: &ClusterPlan) {
+fn render_cluster(out: &mut String, cluster_plan: &ClusterPlan, demote_scoring_narrative: bool) {
     let cluster = &cluster_plan.cluster;
 
     out.push_str(&format!("## {}\n\n", cluster.label));
@@ -301,17 +397,33 @@ fn render_cluster(out: &mut String, cluster_plan: &ClusterPlan) {
         cluster.canonical_remote_id.as_deref().unwrap_or("none")
     ));
 
-    out.push_str("### Scores\n\n");
-    out.push_str(&format!(
-        "- Canonical confidence: `{:.1}` (`scores.canonical`)\n- Repo health: `{:.1}` (`scores.usability`)\n- Recoverability: `{:.1}` (`scores.recoverability`)\n- Publish readiness: `{:.1}` (`scores.oss_readiness`)\n- Maintenance risk: `{:.1}` (`scores.risk`)\n\n",
-        cluster.scores.canonical,
-        cluster.scores.usability,
-        cluster.scores.recoverability,
-        cluster.scores.oss_readiness,
-        cluster.scores.risk
-    ));
+    if demote_scoring_narrative {
+        out.push_str("### Scores (summary)\n\n");
+        out.push_str(&format!(
+            "- One line: canonical `{:.1}`, health `{:.1}`, recover `{:.1}`, publish `{:.1}`, risk `{:.1}`.\n",
+            cluster.scores.canonical,
+            cluster.scores.usability,
+            cluster.scores.recoverability,
+            cluster.scores.oss_readiness,
+            cluster.scores.risk
+        ));
+        out.push_str(&format!(
+            "- _Per-axis narrative (canonical / OSS / risk storytelling):_ `gittriage explain cluster {}` or `gittriage score --format text`.\n\n",
+            cluster.label
+        ));
+    } else {
+        out.push_str("### Scores\n\n");
+        out.push_str(&format!(
+            "- Canonical confidence: `{:.1}` (`scores.canonical`)\n- Repo health: `{:.1}` (`scores.usability`)\n- Recoverability: `{:.1}` (`scores.recoverability`)\n- Publish readiness: `{:.1}` (`scores.oss_readiness`)\n- Maintenance risk: `{:.1}` (`scores.risk`)\n\n",
+            cluster.scores.canonical,
+            cluster.scores.usability,
+            cluster.scores.recoverability,
+            cluster.scores.oss_readiness,
+            cluster.scores.risk
+        ));
 
-    render_score_explanations(out, cluster);
+        render_score_explanations(out, cluster);
+    }
 
     out.push_str("### Evidence\n\n");
     if cluster.evidence.is_empty() {

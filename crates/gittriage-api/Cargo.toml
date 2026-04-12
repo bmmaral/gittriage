@@ -7,9 +7,12 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+gittriage-agent = { path = "../gittriage-agent" }
 gittriage-config = { path = "../gittriage-config" }
+gittriage-core = { path = "../gittriage-core" }
 gittriage-db = { path = "../gittriage-db" }
 gittriage-plan = { path = "../gittriage-plan" }
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tracing.workspace = true
 tokio.workspace = true

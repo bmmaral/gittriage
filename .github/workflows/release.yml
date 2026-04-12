@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+env:
+  HOMEBREW_TAP_REPO: ${{ github.repository_owner }}/homebrew-gittriage
+  SCOOP_BUCKET_REPO: ${{ github.repository_owner }}/scoop-gittriage
+
 jobs:
   linux-musl:
     runs-on: ubuntu-latest
@@ -105,3 +109,89 @@ jobs:
             gittriage-${{ github.ref_name }}-x86_64-pc-windows-msvc.exe.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-homebrew-tap:
+    needs: [linux-musl, macos, windows]
+    runs-on: ubuntu-latest
+    if: secrets.HOMEBREW_TAP_TOKEN != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Render Homebrew formula
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: python packaging/scripts/bump_release_packaging.py homebrew > gittriage.rb
+      - name: Push to tap
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -eux
+          git clone "https://x-access-token:${TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git" tap
+          mkdir -p tap/Formula
+          cp gittriage.rb tap/Formula/gittriage.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/gittriage.rb
+          if git commit -m "gittriage ${GITHUB_REF_NAME}"; then
+            git push
+          else
+            echo "No formula changes to commit."
+          fi
+
+  publish-scoop-bucket:
+    needs: [linux-musl, macos, windows]
+    runs-on: ubuntu-latest
+    if: secrets.SCOOP_BUCKET_TOKEN != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Update manifest and push bucket
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+        run: |
+          set -eux
+          python packaging/scripts/bump_release_packaging.py scoop
+          git clone "https://x-access-token:${TOKEN}@github.com/${SCOOP_BUCKET_REPO}.git" bucket-repo
+          mkdir -p bucket-repo/bucket
+          cp packaging/scoop/gittriage.json bucket-repo/bucket/gittriage.json
+          cd bucket-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/gittriage.json
+          if git commit -m "gittriage ${GITHUB_REF_NAME}"; then
+            git push
+          else
+            echo "No manifest changes to commit."
+          fi
+
+  publish-chocolatey:
+    needs: [linux-musl, macos, windows]
+    runs-on: windows-latest
+    if: secrets.CHOCOLATEY_API_KEY != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Bump Chocolatey package files
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: python packaging/scripts/bump_release_packaging.py chocolatey
+      - name: Pack and push to Chocolatey
+        working-directory: packaging/chocolatey
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          choco pack
+          $nupkg = Get-ChildItem -Filter *.nupkg | Select-Object -First 1
+          choco push $nupkg.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
+        shell: pwsh

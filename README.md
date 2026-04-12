@@ -1,6 +1,6 @@
 <p align="center">
   <strong>GitTriage</strong><br>
-  <em>Sift through your repos. Keep what matters.</em>
+  <em>Workspace truth and preflight safety for coding agents.</em>
 </p>
 
 <p align="center">
@@ -22,14 +22,16 @@
 
 ---
 
-**GitTriage** inventories your local git clones, ingests GitHub metadata (via `gh`), groups everything into **clusters**, scores them, and writes a deterministic **plan** — without touching your working trees.
+**GitTriage** builds a deterministic picture of your local git workspace: which checkout is **canonical**, which paths are **unsafe for automation**, and how duplicates and nested repos relate — without touching your working trees. Optional `gh` ingest augments local remotes; clustering and scores stay rule-based.
 
-**Before:** dozens of checkouts and remotes with unclear "source of truth."
-**After:** one SQLite-backed inventory, reproducible scores, a `plan.json`, and human-readable reports you can diff and review.
+**Before:** agents and humans edit the wrong clone, or guess which folder is “the” repo.
+**After:** `preflight`, `resolve`, `check-path`, and `verdict` give stable JSON (and a read-only HTTP API) you can hand to tooling before any read or write.
 
-> **Who it's for:** solo devs, freelancers, small teams, AI-heavy workflows — anyone who needs *which repos matter*, *which copy is canonical*, and *what to do next*.
+> **Who it's for:** anyone running coding agents or scripts over messy local trees who needs *which repo is real*, *when automation must stop*, and *what a human should review first*.
 >
-> **Not for:** enterprises wanting a hosted catalog, approval workflows, or compliance-first tooling.
+> **Optional:** `explain --ai` and `ai-summary` add narrative on top of deterministic output — they are not required for the core workflow.
+>
+> **Not for:** hosted PR review bots, code search platforms, or compliance-first catalog products.
 
 ---
 
@@ -40,11 +42,12 @@ cargo build --release -p gittriage          # → target/release/gittriage
 cp gittriage.toml.example gittriage.toml        # edit db_path / default_roots / github_owner
 
 gittriage scan ~/Projects --github-owner your-login
-gittriage score --format text
+gittriage preflight my-repo --format json                       # agent manifest (canonical path + verdict + warnings)
+gittriage summary --agent ~/Projects --format json             # compact rollups (duplicates, unsafe, dirty, nested)
 gittriage plan --write plan.json
 gittriage report --format md
-gittriage tui                                # interactive terminal browser
-gittriage score --profile security           # override scoring profile from CLI
+gittriage tui                                # interactive terminal browser (automation column + canonical path)
+gittriage score --profile security           # optional scoring profile override
 ```
 
 ## Install
@@ -61,38 +64,56 @@ cargo build --release -p gittriage
 
 **Package managers & wrappers:** Homebrew formula, Scoop, Chocolatey, **`@bmmaral/gittriage` on GitHub Packages** (npm), AUR PKGBUILD, and Nix are documented in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
 
+| Channel | Notes |
+| :--- | :--- |
+| **GitHub Releases** | Prebuilt `gittriage` binaries (see link above) |
+| **`cargo install --path` / `cargo build`** | From this repo; needs Rust ≥ 1.82 + C toolchain for SQLite |
+| **Homebrew / Scoop** | Formulas in `packaging/` |
+| **npm (`@bmmaral/gittriage`)** | Wrapper around the published binary; install matrix in `docs/DISTRIBUTION.md` |
+
 - `git` on `PATH`
 - Optional: [`gh`](https://cli.github.com/) for `scan --github-owner`
 
 ## Commands
 
+### Agent / coding-agent (stable JSON + provenance)
+
+| Command | What it does |
+| :--- | :--- |
+| `preflight <TARGET>` | Compact manifest: canonical path, alternates, warnings, automation verdict (label / path / URL) |
+| `resolve <QUERY>` | Resolve label / path / URL → canonical path, cluster, alternates, verdict |
+| `verdict <TARGET>` | Deterministic `safe_to_*` flags and `unsafe_for_automation` |
+| `check-path <PATH>` | Wrong-clone check: canonical vs alternate disposition |
+| `summary --agent <WORKSPACE>…` | Token-light workspace rollup (duplicates, unsafe, dirty canon, nested) |
+
 ### Stable core
 
 | Command | What it does |
 | :--- | :--- |
-| `scan` | Discover local repos; optional GitHub ingest |
+| `scan` | Discover repos into SQLite; default **`git_only`** mode inventories real `.git` roots (best for agents); `project_roots` is broader — see [`docs/CLI.md`](docs/CLI.md#git-workspaces-vs-manifest-only-discovery) |
 | `score` | Compute scores + evidence from inventory (`--profile` to override) |
 | `plan` | Resolve clusters → score → actions → write JSON plan (`--profile`) |
-| `report` | Markdown or JSON from a fresh plan (`--profile`) |
+| `report` | Markdown or JSON from a fresh plan (`--profile`; agent-first sections when unscoped) |
 | `doctor` | Environment and DB sanity checks |
 | `tools` | Which optional scanners are on `PATH` |
 | `export` | JSON inventory (optional embedded plan via `--with-plan`) |
 | `import` | Restore inventory from export JSON (`--force` required) |
-| `explain` | Per-cluster deep dive: scores, evidence, actions (`--ai` for narrative) |
+| `explain` | Per-cluster deep dive: scores, evidence, actions (optional `--ai` narrative) |
+| `ai-doctor` | Show AI config / key presence; optional `--probe-network` checks `{api_base}/models` |
 
 ### Secondary
 
 | Command | What it does |
 | :--- | :--- |
-| `tui` | Interactive terminal table — sort, filter, inspect, pin, export |
+| `tui` | Interactive terminal table — sort, filter, inspect, pin, export; automation verdict column |
 
 ### Experimental
 
 | Command | What it does |
 | :--- | :--- |
-| `ai-summary` | AI-generated executive summary of the full plan |
+| `ai-summary` | Optional AI-generated narrative over the full plan (not deterministic) |
 | `apply --dry-run` | Count proposed actions (read-only preview) |
-| `serve` | Read-only JSON API over local SQLite |
+| `serve` | Read-only JSON API: `/v1/*` inventory/plan + `/v2/agent/*` preflight-style operations |
 
 See [`docs/CLI.md`](docs/CLI.md) for flags, examples, and TUI keybindings.
 
@@ -118,7 +139,7 @@ See [`docs/CLI.md`](docs/CLI.md) for flags, examples, and TUI keybindings.
                           └───────────────┘
 ```
 
-13 crates, one workspace:
+14 crates, one workspace:
 
 | Crate | Role |
 | :--- | :--- |
@@ -129,6 +150,7 @@ See [`docs/CLI.md`](docs/CLI.md) for flags, examples, and TUI keybindings.
 | `gittriage-git` | Git metadata extraction |
 | `gittriage-github` | `gh` CLI ingest (5000-repo pagination) |
 | `gittriage-plan` | Clustering, scoring engine, action generation |
+| `gittriage-agent` | Resolve, verdict, preflight, path check, agent summary (deterministic) |
 | `gittriage-report` | Markdown / JSON report rendering |
 | `gittriage-adapters` | Optional external tool hooks (gitleaks, semgrep, syft, jscpd) |
 | `gittriage-tui` | Ratatui interactive terminal browser |
@@ -153,7 +175,7 @@ Missing tools are **silently skipped** — they never break the pipeline. See [`
 
 - No web dashboard; no automatic delete/move/archive of repos.
 - Scoring and clustering are heuristics — review `plan` and `report` for high-stakes decisions.
-- `serve` is experimental (loopback-only by default); do not rely on it as a stable API.
+- `serve` is experimental (loopback-only by default). `/v2/agent/*` is the versioned agent contract; field additions are expected; breaking changes will be noted in release notes.
 - GitHub ingest caps at 5000 repos per owner; warns on truncation.
 - Core usefulness does **not** depend on AI.
 

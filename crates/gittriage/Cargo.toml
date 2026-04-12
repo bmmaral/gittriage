@@ -22,6 +22,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 which.workspace = true
 
+gittriage-agent = { path = "../gittriage-agent" }
 gittriage-adapters = { path = "../gittriage-adapters" }
 gittriage-ai = { path = "../gittriage-ai" }
 gittriage-api = { path = "../gittriage-api" }

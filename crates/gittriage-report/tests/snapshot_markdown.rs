@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use gittriage_core::{
-    ActionType, ClusterMember, ClusterPlan, ClusterRecord, ClusterStatus, EvidenceItem, MemberKind,
-    PlanAction, PlanDocument, Priority, ScoreBundle,
+    ActionType, ClusterMember, ClusterPlan, ClusterRecord, ClusterStatus, EvidenceItem,
+    InventorySnapshot, MemberKind, PlanAction, PlanDocument, Priority, ScoreBundle,
 };
 
 fn fixture_plan() -> PlanDocument {
@@ -68,4 +68,28 @@ fn fixture_plan() -> PlanDocument {
 fn markdown_report_snapshot() {
     let md = gittriage_report::render_markdown(&fixture_plan()).expect("render");
     insta::assert_snapshot!("markdown_report", md);
+}
+
+#[test]
+fn agent_preflight_report_demotes_per_cluster_score_narrative() {
+    let plan = fixture_plan();
+    let (l, m, r, e) = gittriage_report::scope_breakdown(&plan);
+    let md = gittriage_report::render_markdown_with(
+        &plan,
+        gittriage_report::ReportExtras {
+            local_only_count: l,
+            mixed_count: m,
+            remote_only_count: r,
+            empty_count: e,
+            agent_preflight_headings: true,
+            inventory_snapshot: Some(InventorySnapshot::default()),
+            ..Default::default()
+        },
+    )
+    .expect("render");
+    assert!(md.contains("### Scores (summary)"), "{md}");
+    assert!(
+        !md.contains("### Score explanations"),
+        "long score narrative should be omitted in agent-preflight report mode"
+    );
 }

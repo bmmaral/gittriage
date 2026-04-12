@@ -13,6 +13,7 @@ members = [
   "crates/gittriage-api",
   "crates/gittriage-tui",
   "crates/gittriage-ai",
+  "crates/gittriage-agent",
 ]
 resolver = "2"
 

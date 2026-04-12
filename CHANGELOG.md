@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Agent / coding-agent surface
+
+- **`gittriage-agent` crate:** deterministic `resolve`, `verdict`, `preflight`, `check-path`, and `summary --agent` helpers with provenance (`generated_at`, `inventory_run_id`, `scope`, `freshness`, `data_sources`) and explicit **`unsafe_for_automation`** on verdict-shaped output.
+- **CLI:** `preflight`, `resolve`, `verdict`, `check-path`, and `summary --agent` (shared `--format text|json` and plan flags).
+- **`gittriage serve`:** `GET /v2/agent/*` routes mirroring the CLI (contract-tested in `gittriage-api`).
+- **TUI:** automation verdict column, canonical path in cluster detail, `v` to cycle all / safe / unsafe / duplicates / local-only views.
+- **Report:** unscoped markdown leads with agent-preflight sections (unsafe, duplicates, canonical paths, dirty canon, nested) before per-cluster detail; per-cluster **`### Scores (summary)`** replaces long score narratives (full axis copy via `explain` / `score`). Scoped `--scope` reports keep the classic score + explanations blocks.
+
+### CI
+
+- **rust-ci:** `cargo-deny` runs via `taiki-e/install-action` and `cargo deny check` (avoids Docker-based `cargo-deny-action` runner issues). `deny.toml`: drop unused `OpenSSL` license allow entry (clears `license-not-encountered` noise).
+- **release:** Optional jobs publish to a Homebrew tap (`HOMEBREW_TAP_TOKEN`), Scoop bucket (`SCOOP_BUCKET_TOKEN`), and Chocolatey (`CHOCOLATEY_API_KEY`) using `packaging/scripts/bump_release_packaging.py`.
+
 ## v0.1.1 — 2026-03-26
 
 ### Packaging & distribution
