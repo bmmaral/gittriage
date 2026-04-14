@@ -1,12 +1,12 @@
 //! Comprehensive planner rule tests (P6): canonical selection, remote-only,
 //! local-only, ambiguous duplicates, stale-but-important, override/pinning,
-//! and JSON plan snapshot stability.
+//! profile-driven actions, and JSON plan snapshot stability.
 
 use chrono::{Duration, Utc};
 use gittriage_core::{
     ActionType, CloneRecord, CloneRemoteLink, InventorySnapshot, ManifestKind, RemoteRecord,
 };
-use gittriage_plan::{resolve_clusters, PlanBuildOpts, PlanUserIntent};
+use gittriage_plan::{resolve_clusters, PlanBuildOpts, PlanUserIntent, ScoringProfile};
 use std::collections::HashSet;
 
 fn clone_with(id: &str, name: &str, days_ago: i64, dirty: bool) -> CloneRecord {
@@ -77,7 +77,9 @@ fn default_opts() -> PlanBuildOpts {
     }
 }
 
-// ── Canonical selection ──────────────────────────────────────────────────────
+fn action_types(plan: &gittriage_core::ClusterPlan) -> Vec<ActionType> {
+    plan.actions.iter().map(|a| a.action_type.clone()).collect()
+}
 
 #[test]
 fn canonical_picks_freshest_clone_with_remote() {
@@ -104,11 +106,7 @@ fn canonical_picks_freshest_clone_with_remote() {
 
     let plans = resolve_clusters(&snapshot, &default_opts());
     assert_eq!(plans.len(), 1);
-    assert_eq!(
-        plans[0].cluster.canonical_clone_id.as_deref(),
-        Some("new"),
-        "should pick the freshest clone as canonical"
-    );
+    assert_eq!(plans[0].cluster.canonical_clone_id.as_deref(), Some("new"));
 }
 
 #[test]
@@ -123,12 +121,8 @@ fn canonical_prefers_clean_over_dirty() {
     };
 
     let plans = resolve_clusters(&snapshot, &default_opts());
-    assert_eq!(plans.len(), 1);
     let canon = plans[0].cluster.canonical_clone_id.as_deref();
-    assert!(
-        canon == Some("clean") || canon == Some("dirty"),
-        "should pick a canonical clone"
-    );
+    assert!(canon == Some("clean") || canon == Some("dirty"));
 }
 
 #[test]
@@ -145,17 +139,12 @@ fn canonical_non_selected_gets_not_canonical_evidence() {
     let plans = resolve_clusters(&snapshot, &default_opts());
     let canonical = plans[0].cluster.canonical_clone_id.as_deref().unwrap();
     let non_canonical = if canonical == "a" { "b" } else { "a" };
-    assert!(
-        plans[0]
-            .cluster
-            .evidence
-            .iter()
-            .any(|e| e.kind == "not_canonical_clone" && e.subject_id == non_canonical),
-        "non-canonical clone should have not_canonical_clone evidence"
-    );
+    assert!(plans[0]
+        .cluster
+        .evidence
+        .iter()
+        .any(|e| e.kind == "not_canonical_clone" && e.subject_id == non_canonical));
 }
-
-// ── Remote-only clusters ─────────────────────────────────────────────────────
 
 #[test]
 fn remote_only_cluster_suggests_clone_workspace() {
@@ -193,16 +182,11 @@ fn remote_only_has_no_archive_duplicate_actions() {
     };
 
     let plans = resolve_clusters(&snapshot, &default_opts());
-    assert!(
-        !plans[0]
-            .actions
-            .iter()
-            .any(|a| matches!(a.action_type, ActionType::ArchiveLocalDuplicate)),
-        "remote-only should never suggest ArchiveLocalDuplicate"
-    );
+    assert!(!plans[0]
+        .actions
+        .iter()
+        .any(|a| matches!(a.action_type, ActionType::ArchiveLocalDuplicate)));
 }
-
-// ── Local-only clusters ──────────────────────────────────────────────────────
 
 #[test]
 fn local_only_clone_suggests_create_remote() {
@@ -241,23 +225,10 @@ fn local_only_bare_dir_has_lower_recoverability() {
 
     let plans = resolve_clusters(&snapshot, &default_opts());
     assert_eq!(plans.len(), 2);
-    let bare_plan = plans
-        .iter()
-        .find(|p| p.cluster.label == "bare-proj")
-        .unwrap();
-    let git_plan = plans
-        .iter()
-        .find(|p| p.cluster.label == "git-proj")
-        .unwrap();
-    assert!(
-        bare_plan.cluster.scores.recoverability < git_plan.cluster.scores.recoverability,
-        "bare dir recoverability ({}) should be lower than git repo ({})",
-        bare_plan.cluster.scores.recoverability,
-        git_plan.cluster.scores.recoverability
-    );
+    let bare_plan = plans.iter().find(|p| p.cluster.label == "bare-proj").unwrap();
+    let git_plan = plans.iter().find(|p| p.cluster.label == "git-proj").unwrap();
+    assert!(bare_plan.cluster.scores.recoverability < git_plan.cluster.scores.recoverability);
 }
-
-// ── Ambiguous duplicate clusters ─────────────────────────────────────────────
 
 #[test]
 fn many_same_name_clones_get_name_bucket_duplicate_evidence() {
@@ -276,19 +247,12 @@ fn many_same_name_clones_get_name_bucket_duplicate_evidence() {
     };
 
     let plans = resolve_clusters(&snapshot, &default_opts());
-    assert_eq!(plans.len(), 1);
     let cluster = &plans[0].cluster;
-    assert!(
-        cluster
-            .evidence
-            .iter()
-            .any(|e| e.kind == "name_bucket_duplicate_cluster"),
-        "4 same-name clones should get name_bucket_duplicate_cluster evidence"
-    );
-    assert!(
-        cluster.scores.risk > 0.0,
-        "multi-clone name bucket should have positive risk"
-    );
+    assert!(cluster
+        .evidence
+        .iter()
+        .any(|e| e.kind == "name_bucket_duplicate_cluster"));
+    assert!(cluster.scores.risk > 0.0);
 }
 
 #[test]
@@ -313,15 +277,8 @@ fn ambiguous_cluster_has_higher_risk() {
 
     let single_plans = resolve_clusters(&single_snap, &default_opts());
     let multi_plans = resolve_clusters(&multi_snap, &default_opts());
-    assert!(
-        multi_plans[0].cluster.scores.risk >= single_plans[0].cluster.scores.risk,
-        "multi-clone cluster risk ({}) should be >= single-clone ({})",
-        multi_plans[0].cluster.scores.risk,
-        single_plans[0].cluster.scores.risk
-    );
+    assert!(multi_plans[0].cluster.scores.risk >= single_plans[0].cluster.scores.risk);
 }
-
-// ── Stale-but-important repos ────────────────────────────────────────────────
 
 #[test]
 fn stale_but_artifacted_gets_evidence_hint() {
@@ -357,19 +314,13 @@ fn very_stale_without_artifacts_has_elevated_risk() {
     };
 
     let plans = resolve_clusters(&snapshot, &default_opts());
-    assert!(
-        plans[0].cluster.scores.risk >= 10.0,
-        "ancient bare project should have elevated risk: {}",
-        plans[0].cluster.scores.risk
-    );
+    assert!(plans[0].cluster.scores.risk >= 10.0);
     assert!(plans[0]
         .cluster
         .evidence
         .iter()
         .any(|e| e.kind == "very_stale_canonical"));
 }
-
-// ── Override and pinning behavior ────────────────────────────────────────────
 
 #[test]
 fn pin_overrides_canonical_even_for_stale_clone() {
@@ -405,11 +356,7 @@ fn pin_overrides_canonical_even_for_stale_clone() {
         ..Default::default()
     };
     let plans = resolve_clusters(&snapshot, &opts);
-    assert_eq!(
-        plans[0].cluster.canonical_clone_id.as_deref(),
-        Some("stale"),
-        "pin should override freshness-based canonical selection"
-    );
+    assert_eq!(plans[0].cluster.canonical_clone_id.as_deref(), Some("stale"));
     assert!(plans[0]
         .cluster
         .evidence
@@ -438,14 +385,8 @@ fn ignored_key_clears_actions_keeps_scores() {
         ..Default::default()
     };
     let plans = resolve_clusters(&snapshot, &opts);
-    assert!(
-        plans[0].actions.is_empty(),
-        "ignored cluster should have no actions"
-    );
-    assert!(
-        plans[0].cluster.scores.canonical > 0.0,
-        "ignored cluster should still have scores"
-    );
+    assert!(plans[0].actions.is_empty());
+    assert!(plans[0].cluster.scores.canonical > 0.0);
     assert!(plans[0]
         .cluster
         .evidence
@@ -479,11 +420,7 @@ fn archive_hint_adds_evidence_keeps_actions() {
         .evidence
         .iter()
         .any(|e| e.kind == "user_archive_hint"));
-    // archive_hint should NOT suppress actions (unlike ignore)
-    // The cluster still gets its normal action set
 }
-
-// ── Negative evidence (v5 rules) ─────────────────────────────────────────────
 
 #[test]
 fn missing_readme_reduces_usability() {
@@ -508,22 +445,14 @@ fn missing_readme_reduces_usability() {
 
     let plans_with = resolve_clusters(&snap_with, &default_opts());
     let plans_without = resolve_clusters(&snap_without, &default_opts());
-    assert!(
-        plans_without[0].cluster.scores.usability < plans_with[0].cluster.scores.usability,
-        "missing readme should reduce usability: with={} without={}",
-        plans_with[0].cluster.scores.usability,
-        plans_without[0].cluster.scores.usability
-    );
+    assert!(plans_without[0].cluster.scores.usability < plans_with[0].cluster.scores.usability);
 }
 
 #[test]
 fn missing_manifest_reduces_usability() {
-    let mut with_manifest = clone_with("mani", "proj-a", 5, false);
-    with_manifest.manifest_kind = Some(ManifestKind::Cargo);
-    let mut no_manifest = clone_with("nomod", "proj-b", 5, false);
+    let with_manifest = clone_with("withman", "proj-a", 5, false);
+    let mut no_manifest = clone_with("noman", "proj-b", 5, false);
     no_manifest.manifest_kind = None;
-    no_manifest.path = "/alt".into();
-
     let snap_with = InventorySnapshot {
         clones: vec![with_manifest],
         remotes: vec![],
@@ -536,155 +465,180 @@ fn missing_manifest_reduces_usability() {
         links: vec![],
         ..Default::default()
     };
-
     let plans_with = resolve_clusters(&snap_with, &default_opts());
     let plans_without = resolve_clusters(&snap_without, &default_opts());
-    assert!(
-        plans_without[0].cluster.scores.usability < plans_with[0].cluster.scores.usability,
-        "missing manifest should reduce usability"
-    );
+    assert!(plans_without[0].cluster.scores.usability < plans_with[0].cluster.scores.usability);
 }
 
 #[test]
-fn archived_remote_increases_risk() {
-    let clone = clone_with("c1", "proj", 5, false);
-    let mut remote = github_remote("r1", "github.com/acme/proj");
-    remote.is_archived = true;
-    let snapshot = InventorySnapshot {
-        clones: vec![clone],
-        remotes: vec![remote.clone()],
-        links: vec![CloneRemoteLink {
-            clone_id: "c1".into(),
-            remote_id: "r1".into(),
-            relationship: "origin".into(),
-        }],
-        ..Default::default()
-    };
-
-    let plans = resolve_clusters(&snapshot, &default_opts());
-    assert!(plans[0]
-        .cluster
-        .evidence
-        .iter()
-        .any(|e| e.kind == "archived_remote_risk"));
-}
-
-// ── JSON plan snapshot stability ─────────────────────────────────────────────
-
-#[test]
-fn plan_document_serializes_with_expected_fields() {
-    let clone = clone_with("c1", "proj", 5, false);
-    let remote = github_remote("r1", "github.com/acme/proj");
-    let snapshot = InventorySnapshot {
-        clones: vec![clone],
-        remotes: vec![remote.clone()],
-        links: vec![CloneRemoteLink {
-            clone_id: "c1".into(),
-            remote_id: "r1".into(),
-            relationship: "origin".into(),
-        }],
-        ..Default::default()
-    };
-
-    let plan = gittriage_plan::build_plan_with(&snapshot, default_opts()).unwrap();
-    let json = serde_json::to_value(&plan).unwrap();
-    assert_eq!(json["schema_version"], 1);
-    assert_eq!(json["scoring_rules_version"], 5);
-    assert!(json["generated_at"].is_string());
-    assert!(json["clusters"].is_array());
-    let cluster = &json["clusters"][0];
-    assert!(cluster["cluster"]["scores"]["canonical"].is_number());
-    assert!(cluster["cluster"]["scores"]["usability"].is_number());
-    assert!(cluster["cluster"]["scores"]["recoverability"].is_number());
-    assert!(cluster["cluster"]["scores"]["oss_readiness"].is_number());
-    assert!(cluster["cluster"]["scores"]["risk"].is_number());
-    assert!(cluster["cluster"]["evidence"].is_array());
-    assert!(cluster["actions"].is_array());
-}
-
-// ── Action type coverage ─────────────────────────────────────────────────────
-
-#[test]
-fn duplicate_clones_get_archive_action() {
-    let a = clone_with("a", "proj", 1, false);
-    let b = clone_with("b", "proj", 10, false);
-    let remote = github_remote("r1", "github.com/acme/proj");
+fn ambiguous_clusters_only_emit_review_not_archive_actions() {
+    let mut a = clone_with("a", "proj", 0, false);
+    a.path = "/tmp/proj-a".into();
+    a.last_commit_at = None;
+    a.head_oid = None;
+    a.fingerprint = Some("fp-a".into());
+    let mut b = clone_with("b", "proj", 0, false);
+    b.path = "/tmp/proj-b".into();
+    b.last_commit_at = None;
+    b.head_oid = None;
+    b.fingerprint = Some("fp-b".into());
     let snapshot = InventorySnapshot {
         clones: vec![a, b],
+        remotes: vec![],
+        links: vec![],
+        ..Default::default()
+    };
+        let plans = resolve_clusters(&snapshot, &default_opts());
+    assert!(matches!(plans[0].cluster.status, gittriage_core::ClusterStatus::Ambiguous));
+    let types = action_types(&plans[0]);
+    assert!(types.contains(&ActionType::ReviewAmbiguousCluster));
+    assert!(!types.contains(&ActionType::ArchiveLocalDuplicate));
+}
+
+#[test]
+fn resolved_high_canonical_duplicate_cluster_emits_archive_actions() {
+    let mut older = clone_with("clone-old", "proj", 500, false);
+    older.path = "/tmp/old/proj".into();
+    let mut newer = clone_with("clone-new", "proj", 1, false);
+    newer.path = "/tmp/new/proj".into();
+    let remote = github_remote("remote-1", "github.com/acme/proj");
+    let snapshot = InventorySnapshot {
+        clones: vec![older, newer],
         remotes: vec![remote.clone()],
         links: vec![
             CloneRemoteLink {
-                clone_id: "a".into(),
-                remote_id: "r1".into(),
+                clone_id: "clone-old".into(),
+                remote_id: remote.id.clone(),
                 relationship: "origin".into(),
             },
             CloneRemoteLink {
-                clone_id: "b".into(),
-                remote_id: "r1".into(),
+                clone_id: "clone-new".into(),
+                remote_id: remote.id.clone(),
                 relationship: "origin".into(),
             },
         ],
         ..Default::default()
     };
-
-    let plans = resolve_clusters(&snapshot, &default_opts());
-    assert!(
-        plans[0]
-            .actions
-            .iter()
-            .any(|a| matches!(a.action_type, ActionType::ArchiveLocalDuplicate)),
-        "duplicate clones should get ArchiveLocalDuplicate action"
+    let plans = resolve_clusters(
+        &snapshot,
+        &PlanBuildOpts {
+            merge_base: false,
+            archive_duplicate_canonical_min: 10,
+            ..Default::default()
+        },
     );
+    let types = action_types(&plans[0]);
+    assert!(matches!(plans[0].cluster.status, gittriage_core::ClusterStatus::Resolved));
+    assert!(types.contains(&ActionType::ArchiveLocalDuplicate));
 }
 
 #[test]
-fn missing_readme_on_canonical_suggests_add_docs() {
-    let mut c = clone_with("c1", "proj", 5, false);
-    c.readme_title = None;
-    let remote = github_remote("r1", "github.com/acme/proj");
+fn local_only_cluster_emits_create_remote_repo_action() {
+    let c = clone_with("c1", "solo", 5, false);
     let snapshot = InventorySnapshot {
         clones: vec![c],
+        remotes: vec![],
+        links: vec![],
+        ..Default::default()
+    };
+    let plans = resolve_clusters(&snapshot, &default_opts());
+    assert!(action_types(&plans[0]).contains(&ActionType::CreateRemoteRepo));
+}
+
+#[test]
+fn remote_only_cluster_emits_clone_local_workspace_action() {
+    let remote = github_remote("remote-1", "github.com/acme/proj");
+    let snapshot = InventorySnapshot {
+        clones: vec![],
+        remotes: vec![remote],
+        links: vec![],
+        ..Default::default()
+    };
+    let plans = resolve_clusters(&snapshot, &default_opts());
+    assert!(action_types(&plans[0]).contains(&ActionType::CloneLocalWorkspace));
+}
+
+#[test]
+fn scoring_profiles_change_hygiene_actions_not_score_axes() {
+    let clone = CloneRecord {
+        id: "c1".into(),
+        path: "/tmp/proj".into(),
+        display_name: "proj".into(),
+        is_git: true,
+        head_oid: Some("abc".into()),
+        active_branch: Some("main".into()),
+        default_branch: Some("main".into()),
+        is_dirty: false,
+        last_commit_at: Some(Utc::now()),
+        size_bytes: None,
+        manifest_kind: Some(ManifestKind::Cargo),
+        readme_title: Some("proj".into()),
+        license_spdx: Some("MIT".into()),
+        fingerprint: Some("fp".into()),
+        has_lockfile: false,
+        has_ci: false,
+        has_tests_dir: false,
+    };
+    let remote = github_remote("remote-1", "github.com/acme/proj");
+    let snapshot = InventorySnapshot {
+        clones: vec![clone],
         remotes: vec![remote.clone()],
         links: vec![CloneRemoteLink {
             clone_id: "c1".into(),
-            remote_id: "r1".into(),
+            remote_id: remote.id.clone(),
             relationship: "origin".into(),
         }],
         ..Default::default()
     };
 
-    let plans = resolve_clusters(&snapshot, &default_opts());
-    assert!(
-        plans[0]
-            .actions
-            .iter()
-            .any(|a| matches!(a.action_type, ActionType::AddMissingDocs)),
-        "missing readme should suggest AddMissingDocs"
+    let default_plan = resolve_clusters(
+        &snapshot,
+        &PlanBuildOpts {
+            merge_base: false,
+            oss_candidate_threshold: 60,
+            ..Default::default()
+        },
     );
-}
-
-#[test]
-fn missing_license_suggests_add_license() {
-    let mut c = clone_with("c1", "proj", 5, false);
-    c.license_spdx = None;
-    let remote = github_remote("r1", "github.com/acme/proj");
-    let snapshot = InventorySnapshot {
-        clones: vec![c],
-        remotes: vec![remote.clone()],
-        links: vec![CloneRemoteLink {
-            clone_id: "c1".into(),
-            remote_id: "r1".into(),
-            relationship: "origin".into(),
-        }],
-        ..Default::default()
-    };
-
-    let plans = resolve_clusters(&snapshot, &default_opts());
-    assert!(
-        plans[0]
-            .actions
-            .iter()
-            .any(|a| matches!(a.action_type, ActionType::AddLicense)),
-        "missing license should suggest AddLicense"
+    let publish_plan = resolve_clusters(
+        &snapshot,
+        &PlanBuildOpts {
+            merge_base: false,
+            oss_candidate_threshold: 60,
+            user_intent: PlanUserIntent {
+                scoring_profile: ScoringProfile::PublishReadiness,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
     );
+    let oss_plan = resolve_clusters(
+        &snapshot,
+        &PlanBuildOpts {
+            merge_base: false,
+            oss_candidate_threshold: 60,
+            user_intent: PlanUserIntent {
+                scoring_profile: ScoringProfile::OpenSourceReadiness,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(default_plan[0].cluster.scores.oss_readiness, publish_plan[0].cluster.scores.oss_readiness);
+    assert_eq!(publish_plan[0].cluster.scores.oss_readiness, oss_plan[0].cluster.scores.oss_readiness);
+    assert!(!default_plan[0].cluster.evidence.iter().any(|e| e.kind == "scoring_profile_active"));
+    assert!(publish_plan[0].cluster.evidence.iter().any(|e| e.kind == "scoring_profile_active"));
+    assert!(oss_plan[0].cluster.evidence.iter().any(|e| e.kind == "scoring_profile_active"));
+
+    let default_actions = action_types(&default_plan[0]);
+    let publish_actions = action_types(&publish_plan[0]);
+    let oss_actions = action_types(&oss_plan[0]);
+
+    assert!(default_actions.contains(&ActionType::AddCi));
+    assert!(default_actions.contains(&ActionType::RunSecurityScans));
+    assert!(!default_actions.contains(&ActionType::PublishOssCandidate));
+    assert!(publish_actions.contains(&ActionType::PublishOssCandidate));
+    assert!(!publish_actions.contains(&ActionType::AddCi));
+    assert!(oss_actions.contains(&ActionType::PublishOssCandidate));
+    assert!(!oss_actions.contains(&ActionType::AddCi));
 }

@@ -860,6 +860,7 @@ dependencies = [
  "chrono",
  "gittriage-core",
  "serde_json",
+ "tempfile",
  "tracing",
  "uuid",
  "which",
@@ -872,6 +873,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "gittriage-core",
+ "gittriage-plan",
  "serde",
  "serde_json",
 ]
