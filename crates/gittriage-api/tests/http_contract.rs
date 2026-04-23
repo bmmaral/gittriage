@@ -31,7 +31,11 @@ fn test_state_with_inventory() -> (tempfile::TempDir, Arc<AppState>, String) {
     let alt_root = dir.path().join("ws").join("canon-copy");
     for root in [&repo_root, &alt_root] {
         fs::create_dir_all(root.join(".git")).unwrap();
-        fs::write(root.join("Cargo.toml"), "[package]\nname='demo'\nversion='0.1.0'\n").unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='demo'\nversion='0.1.0'\n",
+        )
+        .unwrap();
         fs::write(root.join("README.md"), "# Demo Repo\n").unwrap();
         fs::write(root.join("LICENSE"), "MIT License\n").unwrap();
     }
@@ -46,6 +50,7 @@ fn test_state_with_inventory() -> (tempfile::TempDir, Arc<AppState>, String) {
         default_branch: Some("main".into()),
         is_dirty: false,
         last_commit_at: None,
+        upstream_tracking: None,
         size_bytes: Some(1),
         manifest_kind: Some(gittriage_core::ManifestKind::Cargo),
         readme_title: Some("Demo Repo".into()),
@@ -65,6 +70,7 @@ fn test_state_with_inventory() -> (tempfile::TempDir, Arc<AppState>, String) {
         default_branch: Some("main".into()),
         is_dirty: false,
         last_commit_at: None,
+        upstream_tracking: None,
         size_bytes: Some(1),
         manifest_kind: Some(gittriage_core::ManifestKind::Cargo),
         readme_title: Some("Demo Repo".into()),

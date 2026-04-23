@@ -186,6 +186,7 @@ fn build_clone_record(path: &Path, options: &ScanOptions) -> Result<CloneRecord>
         default_branch: None,
         is_dirty: false,
         last_commit_at: None,
+        upstream_tracking: None,
         size_bytes: Some(size_bytes),
         manifest_kind,
         readme_title,

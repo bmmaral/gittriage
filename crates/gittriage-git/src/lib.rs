@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
-use gittriage_core::{normalize_remote_url, CloneRecord};
+use gittriage_core::{normalize_remote_url, CloneRecord, UpstreamTracking};
 use std::path::Path;
 use std::process::Command;
 
@@ -22,15 +22,6 @@ pub struct GitMetadata {
     pub upstream_tracking: Option<UpstreamTracking>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct UpstreamTracking {
-    pub upstream_branch: Option<String>,
-    pub ahead_count: u32,
-    pub behind_count: u32,
-    pub no_upstream_configured: bool,
-    pub upstream_resolution_error: Option<String>,
-}
-
 pub fn enrich_clone(path: &Path, clone: &mut CloneRecord) -> Result<Vec<GitRemote>> {
     if !clone.is_git {
         return Ok(Vec::new());
@@ -42,6 +33,7 @@ pub fn enrich_clone(path: &Path, clone: &mut CloneRecord) -> Result<Vec<GitRemot
     clone.default_branch = meta.default_branch;
     clone.is_dirty = meta.is_dirty;
     clone.last_commit_at = meta.last_commit_at;
+    clone.upstream_tracking = meta.upstream_tracking;
     Ok(meta.remotes)
 }
 
@@ -301,8 +293,9 @@ fn run_git<const N: usize>(path: &Path, args: [&str; N]) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::read_upstream_tracking;
+    use super::{enrich_clone, read_upstream_tracking};
     use anyhow::{Context, Result};
+    use gittriage_core::CloneRecord;
     use std::path::Path;
     use std::process::Command;
 
@@ -386,6 +379,73 @@ mod tests {
         assert_eq!(tracking.behind_count, 1);
         assert!(!tracking.no_upstream_configured);
         assert_eq!(tracking.upstream_resolution_error, None);
+        Ok(())
+    }
+
+    #[test]
+    fn enrich_clone_populates_upstream_tracking() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let remote = tmp.path().join("remote.git");
+        let origin_seed = tmp.path().join("origin-seed");
+        let local = tmp.path().join("local");
+
+        run(
+            tmp.path(),
+            &["init", "--bare", remote.to_str().expect("utf8 path")],
+        )?;
+        std::fs::create_dir_all(&origin_seed)?;
+        init_repo(&origin_seed)?;
+        commit_file(&origin_seed, "seed.txt", "seed", "seed")?;
+        run(
+            &origin_seed,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote.to_str().expect("utf8 path"),
+            ],
+        )?;
+        run(&origin_seed, &["push", "-u", "origin", "main"])?;
+        run(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"])?;
+
+        run(
+            tmp.path(),
+            &[
+                "clone",
+                remote.to_str().expect("utf8 path"),
+                local.to_str().expect("utf8 path"),
+            ],
+        )?;
+        let mut clone = CloneRecord {
+            id: "clone-1".into(),
+            path: local.to_string_lossy().to_string(),
+            display_name: "local".into(),
+            is_git: true,
+            head_oid: None,
+            active_branch: None,
+            default_branch: None,
+            is_dirty: false,
+            last_commit_at: None,
+            upstream_tracking: None,
+            size_bytes: None,
+            manifest_kind: None,
+            readme_title: None,
+            license_spdx: None,
+            fingerprint: None,
+            has_lockfile: false,
+            has_ci: false,
+            has_tests_dir: false,
+        };
+
+        let remotes = enrich_clone(&local, &mut clone)?;
+        assert!(!remotes.is_empty());
+        let tracking = clone
+            .upstream_tracking
+            .as_ref()
+            .expect("upstream tracking populated");
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("origin/main"));
+        assert_eq!(tracking.ahead_count, 0);
+        assert_eq!(tracking.behind_count, 0);
         Ok(())
     }
 

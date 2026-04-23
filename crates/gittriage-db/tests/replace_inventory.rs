@@ -1,7 +1,7 @@
 use chrono::Utc;
 use gittriage_core::{
     CloneRecord, ClusterPlan, ClusterRecord, ClusterStatus, InventorySnapshot, PlanDocument,
-    ScoreBundle,
+    ScoreBundle, UpstreamTracking,
 };
 use gittriage_db::Database;
 use tempfile::tempdir;
@@ -24,6 +24,13 @@ fn replace_inventory_roundtrip() {
             default_branch: None,
             is_dirty: false,
             last_commit_at: None,
+            upstream_tracking: Some(UpstreamTracking {
+                upstream_branch: Some("origin/main".into()),
+                ahead_count: 2,
+                behind_count: 1,
+                no_upstream_configured: false,
+                upstream_resolution_error: None,
+            }),
             size_bytes: None,
             manifest_kind: None,
             readme_title: None,
@@ -48,6 +55,13 @@ fn replace_inventory_roundtrip() {
     assert_eq!(loaded.clones.len(), 1);
     assert_eq!(loaded.clones[0].id, "c1");
     assert_eq!(loaded.clones[0].path, "/tmp/a");
+    let upstream = loaded.clones[0]
+        .upstream_tracking
+        .as_ref()
+        .expect("upstream tracking");
+    assert_eq!(upstream.upstream_branch.as_deref(), Some("origin/main"));
+    assert_eq!(upstream.ahead_count, 2);
+    assert_eq!(upstream.behind_count, 1);
 }
 
 #[test]
@@ -68,6 +82,7 @@ fn replace_inventory_clears_persisted_plan() {
             default_branch: None,
             is_dirty: false,
             last_commit_at: None,
+            upstream_tracking: None,
             size_bytes: None,
             manifest_kind: None,
             readme_title: None,

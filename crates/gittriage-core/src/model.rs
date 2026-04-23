@@ -57,6 +57,15 @@ pub struct RunScanStats {
     pub skipped_nested_git: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct UpstreamTracking {
+    pub upstream_branch: Option<String>,
+    pub ahead_count: u32,
+    pub behind_count: u32,
+    pub no_upstream_configured: bool,
+    pub upstream_resolution_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunRecord {
     pub id: String,
@@ -80,6 +89,8 @@ pub struct CloneRecord {
     pub default_branch: Option<String>,
     pub is_dirty: bool,
     pub last_commit_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_tracking: Option<UpstreamTracking>,
     pub size_bytes: Option<u64>,
     pub manifest_kind: Option<ManifestKind>,
     pub readme_title: Option<String>,
