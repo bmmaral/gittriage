@@ -38,7 +38,7 @@ SQLite connection and persistence boundary. Uses WAL mode, `busy_timeout`, and s
 Filesystem scanning and project metadata extraction. Supports `git_only` (default) and `project_roots` scan modes, `max_depth`, `.gittriageignore` patterns, and automatic stop-at-`.git` to prevent monorepo sub-package noise. Detects SPDX license identifiers, lockfiles, CI configs, and test directories.
 
 ### `gittriage-git`
-Git metadata collection via system `git` in v1.
+Git metadata collection via system `git` in v1, including upstream tracking metadata (configured upstream branch, ahead/behind counts, and no-upstream state) for drift-aware analysis.
 
 ### `gittriage-github`
 Remote repository ingest via `gh` CLI in v1. Supports up to 5000 repos per owner with truncation warnings.

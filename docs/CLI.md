@@ -20,10 +20,10 @@ These commands are the **stable surface** for local git workspace triage (names 
 
 | Command | Purpose |
 | --- | --- |
-| `scan` | Inventory local repos (and optional GitHub ingest) into SQLite |
+| `scan` | Inventory local repos (and optional GitHub ingest) into SQLite; git metadata includes upstream tracking (`upstream_branch`, ahead/behind counts, no-upstream state) |
 | `score` | Compute **scores and evidence** per cluster (stdout only; does not persist a plan) |
 | `plan` | Build clusters, scores, evidence, and **prioritized actions**; write `plan.json`; persist plan to SQLite |
-| `report` | Render markdown or JSON from the current inventory (plan recomputed in-process) |
+| `report` | Render markdown or JSON from the current inventory (plan recomputed in-process); its JSON-friendly building blocks also feed the CI regression-dashboard artifact workflow |
 | `doctor` | Environment, toolchain, and DB checks (`--format json` for scripts) |
 | `tools` | Optional external adapters on `PATH` (`--format json` for scripts) |
 | `export` | JSON envelope with `inventory` (optional `--with-plan`) for backup or transfer |

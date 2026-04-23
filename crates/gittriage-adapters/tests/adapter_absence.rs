@@ -296,7 +296,9 @@ fn fake_adapter_binaries_produce_evidence_items() {
     }
 
     let old_path = env::var("PATH").unwrap_or_default();
-    env::set_var("PATH", format!("{}:{}", bin_dir.display(), old_path));
+    let mut path_entries = env::split_paths(&old_path).collect::<Vec<_>>();
+    path_entries.insert(0, bin_dir.clone());
+    env::set_var("PATH", env::join_paths(path_entries).unwrap());
 
     let (mut plan, snapshot) = make_plan("clone-1", &root.to_string_lossy());
     attach_external_evidence(&mut plan, &snapshot).unwrap();

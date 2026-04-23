@@ -13,7 +13,14 @@
 ### CI
 
 - **rust-ci:** `cargo-deny` runs via `taiki-e/install-action` and `cargo deny check` (avoids Docker-based `cargo-deny-action` runner issues). `deny.toml`: drop unused `OpenSSL` license allow entry (clears `license-not-encountered` noise).
+- **rust-ci:** the adapter test harness now uses platform-aware `PATH` joining, so Windows fake `.cmd` shims resolve correctly and the adapter absence suite stays green.
+- **regression-dashboard:** a post-`rust-ci` workflow now builds `plan.json`, `score --format json`, and `summary --agent --format json` artifacts plus a combined drift dashboard JSON for CI review.
+
 - **release:** Optional jobs publish to a Homebrew tap (`HOMEBREW_TAP_TOKEN`), Scoop bucket (`SCOOP_BUCKET_TOKEN`), and Chocolatey (`CHOCOLATEY_API_KEY`) using `packaging/scripts/bump_release_packaging.py`.
+
+### Git metadata
+
+- `gittriage-git` now records upstream tracking metadata (`upstream_branch`, ahead/behind counts, and no-upstream state) in `CloneRecord.upstream_tracking` so repo analysis can reason about branch drift.
 
 ## v0.1.1 — 2026-03-26
 

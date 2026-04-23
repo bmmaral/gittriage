@@ -15,9 +15,6 @@
   <a href="https://github.com/bmmaral/gittriage/releases/latest"><img src="https://img.shields.io/github/v/release/bmmaral/gittriage?sort=semver&style=flat-square&logo=github&label=release" alt="GitHub release"></a>
   <a href="https://github.com/bmmaral/gittriage/blob/main/docs/DISTRIBUTION.md#cargo-from-cratesio"><img src="https://img.shields.io/badge/crates.io-install%20--git%20%7C%20--path-lightgrey?style=flat-square&logo=rust&label=crates.io" alt="crates.io (not published as a single crate yet)"></a>
   <a href="https://github.com/bmmaral/gittriage/pkgs/npm/gittriage"><img src="https://img.shields.io/github/package-json/v/bmmaral/gittriage/main?filename=packaging%2Fnpm%2Fpackage.json&style=flat-square&logo=github&label=%40bmmaral%2Fgittriage" alt="npm package version (declared in repo; published via GitHub Packages workflow)"></a>
-  <a href="https://github.com/bmmaral/gittriage/tree/main/packaging/chocolatey"><img src="https://img.shields.io/badge/chocolatey-template%20in%20repo-8B4513?style=flat-square&logo=chocolatey&logoColor=white&label=chocolatey" alt="Chocolatey (community feed not published)"></a>
-  <a href="https://github.com/bmmaral/gittriage/tree/main/packaging/homebrew"><img src="https://img.shields.io/badge/homebrew-formula%20(shipped)-FBB040?style=flat-square&logo=homebrew&logoColor=white" alt="Homebrew formula"></a>
-  <a href="https://github.com/bmmaral/gittriage/tree/main/packaging/scoop"><img src="https://img.shields.io/badge/scoop-manifest%20(shipped)-7E56FF?style=flat-square" alt="Scoop manifest"></a>
 </p>
 
 ---
