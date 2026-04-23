@@ -379,7 +379,11 @@ fn tool_on_path(bin: &str) -> bool {
 
     #[cfg(windows)]
     {
-        for candidate in [format!("{bin}.cmd"), format!("{bin}.bat"), format!("{bin}.exe")] {
+        for candidate in [
+            format!("{bin}.cmd"),
+            format!("{bin}.bat"),
+            format!("{bin}.exe"),
+        ] {
             if which::which(candidate).is_ok() {
                 return true;
             }

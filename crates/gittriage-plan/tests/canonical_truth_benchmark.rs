@@ -7,7 +7,10 @@
 use gittriage_core::{ClusterPlan, InventorySnapshot};
 use gittriage_plan::{resolve_clusters, PlanBuildOpts};
 use serde::{Deserialize, Serialize};
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Deserialize)]
 struct CanonicalTruthCase {
@@ -69,12 +72,10 @@ fn load_cases() -> Vec<CanonicalTruthCase> {
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
-        let raw = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("read fixture {}: {e}", path.display())
-        });
-        let case: CanonicalTruthCase = serde_json::from_str(&raw).unwrap_or_else(|e| {
-            panic!("parse fixture {}: {e}", path.display())
-        });
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+        let case: CanonicalTruthCase = serde_json::from_str(&raw)
+            .unwrap_or_else(|e| panic!("parse fixture {}: {e}", path.display()));
         cases.push(case);
     }
 
@@ -152,7 +153,11 @@ fn evaluate_case(case: &CanonicalTruthCase) -> CaseResult {
         passed,
         expected: case.expected.clone(),
         actual,
-        failure: if passed { None } else { Some(issues.join("; ")) },
+        failure: if passed {
+            None
+        } else {
+            Some(issues.join("; "))
+        },
     }
 }
 
