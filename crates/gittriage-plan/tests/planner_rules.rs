@@ -20,6 +20,7 @@ fn clone_with(id: &str, name: &str, days_ago: i64, dirty: bool) -> CloneRecord {
         default_branch: Some("main".into()),
         is_dirty: dirty,
         last_commit_at: Some(Utc::now() - Duration::days(days_ago)),
+        upstream_tracking: None,
         size_bytes: Some(1024),
         manifest_kind: Some(ManifestKind::Cargo),
         readme_title: Some(name.into()),
@@ -42,6 +43,7 @@ fn bare_clone(id: &str, name: &str) -> CloneRecord {
         default_branch: None,
         is_dirty: false,
         last_commit_at: None,
+        upstream_tracking: None,
         size_bytes: None,
         manifest_kind: None,
         readme_title: None,
@@ -225,8 +227,14 @@ fn local_only_bare_dir_has_lower_recoverability() {
 
     let plans = resolve_clusters(&snapshot, &default_opts());
     assert_eq!(plans.len(), 2);
-    let bare_plan = plans.iter().find(|p| p.cluster.label == "bare-proj").unwrap();
-    let git_plan = plans.iter().find(|p| p.cluster.label == "git-proj").unwrap();
+    let bare_plan = plans
+        .iter()
+        .find(|p| p.cluster.label == "bare-proj")
+        .unwrap();
+    let git_plan = plans
+        .iter()
+        .find(|p| p.cluster.label == "git-proj")
+        .unwrap();
     assert!(bare_plan.cluster.scores.recoverability < git_plan.cluster.scores.recoverability);
 }
 
@@ -356,7 +364,10 @@ fn pin_overrides_canonical_even_for_stale_clone() {
         ..Default::default()
     };
     let plans = resolve_clusters(&snapshot, &opts);
-    assert_eq!(plans[0].cluster.canonical_clone_id.as_deref(), Some("stale"));
+    assert_eq!(
+        plans[0].cluster.canonical_clone_id.as_deref(),
+        Some("stale")
+    );
     assert!(plans[0]
         .cluster
         .evidence
@@ -488,8 +499,11 @@ fn ambiguous_clusters_only_emit_review_not_archive_actions() {
         links: vec![],
         ..Default::default()
     };
-        let plans = resolve_clusters(&snapshot, &default_opts());
-    assert!(matches!(plans[0].cluster.status, gittriage_core::ClusterStatus::Ambiguous));
+    let plans = resolve_clusters(&snapshot, &default_opts());
+    assert!(matches!(
+        plans[0].cluster.status,
+        gittriage_core::ClusterStatus::Ambiguous
+    ));
     let types = action_types(&plans[0]);
     assert!(types.contains(&ActionType::ReviewAmbiguousCluster));
     assert!(!types.contains(&ActionType::ArchiveLocalDuplicate));
@@ -528,7 +542,10 @@ fn resolved_high_canonical_duplicate_cluster_emits_archive_actions() {
         },
     );
     let types = action_types(&plans[0]);
-    assert!(matches!(plans[0].cluster.status, gittriage_core::ClusterStatus::Resolved));
+    assert!(matches!(
+        plans[0].cluster.status,
+        gittriage_core::ClusterStatus::Resolved
+    ));
     assert!(types.contains(&ActionType::ArchiveLocalDuplicate));
 }
 
@@ -570,6 +587,7 @@ fn scoring_profiles_change_hygiene_actions_not_score_axes() {
         default_branch: Some("main".into()),
         is_dirty: false,
         last_commit_at: Some(Utc::now()),
+        upstream_tracking: None,
         size_bytes: None,
         manifest_kind: Some(ManifestKind::Cargo),
         readme_title: Some("proj".into()),
@@ -624,11 +642,29 @@ fn scoring_profiles_change_hygiene_actions_not_score_axes() {
         },
     );
 
-    assert_eq!(default_plan[0].cluster.scores.oss_readiness, publish_plan[0].cluster.scores.oss_readiness);
-    assert_eq!(publish_plan[0].cluster.scores.oss_readiness, oss_plan[0].cluster.scores.oss_readiness);
-    assert!(!default_plan[0].cluster.evidence.iter().any(|e| e.kind == "scoring_profile_active"));
-    assert!(publish_plan[0].cluster.evidence.iter().any(|e| e.kind == "scoring_profile_active"));
-    assert!(oss_plan[0].cluster.evidence.iter().any(|e| e.kind == "scoring_profile_active"));
+    assert_eq!(
+        default_plan[0].cluster.scores.oss_readiness,
+        publish_plan[0].cluster.scores.oss_readiness
+    );
+    assert_eq!(
+        publish_plan[0].cluster.scores.oss_readiness,
+        oss_plan[0].cluster.scores.oss_readiness
+    );
+    assert!(!default_plan[0]
+        .cluster
+        .evidence
+        .iter()
+        .any(|e| e.kind == "scoring_profile_active"));
+    assert!(publish_plan[0]
+        .cluster
+        .evidence
+        .iter()
+        .any(|e| e.kind == "scoring_profile_active"));
+    assert!(oss_plan[0]
+        .cluster
+        .evidence
+        .iter()
+        .any(|e| e.kind == "scoring_profile_active"));
 
     let default_actions = action_types(&default_plan[0]);
     let publish_actions = action_types(&publish_plan[0]);

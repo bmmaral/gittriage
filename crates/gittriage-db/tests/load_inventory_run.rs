@@ -33,6 +33,7 @@ fn load_inventory_includes_latest_run() {
             default_branch: None,
             is_dirty: false,
             last_commit_at: None,
+            upstream_tracking: None,
             size_bytes: None,
             manifest_kind: None,
             readme_title: None,

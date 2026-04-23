@@ -33,6 +33,7 @@ fn external_evidence_is_best_effort_and_non_blocking() {
             default_branch: None,
             is_dirty: false,
             last_commit_at: None,
+            upstream_tracking: None,
             size_bytes: None,
             manifest_kind: None,
             readme_title: None,

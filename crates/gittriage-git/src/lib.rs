@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
-use gittriage_core::{normalize_remote_url, CloneRecord};
+use gittriage_core::{normalize_remote_url, CloneRecord, UpstreamTracking};
 use std::path::Path;
 use std::process::Command;
 
@@ -19,6 +19,7 @@ pub struct GitMetadata {
     pub is_dirty: bool,
     pub last_commit_at: Option<DateTime<Utc>>,
     pub remotes: Vec<GitRemote>,
+    pub upstream_tracking: Option<UpstreamTracking>,
 }
 
 pub fn enrich_clone(path: &Path, clone: &mut CloneRecord) -> Result<Vec<GitRemote>> {
@@ -32,6 +33,7 @@ pub fn enrich_clone(path: &Path, clone: &mut CloneRecord) -> Result<Vec<GitRemot
     clone.default_branch = meta.default_branch;
     clone.is_dirty = meta.is_dirty;
     clone.last_commit_at = meta.last_commit_at;
+    clone.upstream_tracking = meta.upstream_tracking;
     Ok(meta.remotes)
 }
 
@@ -56,6 +58,7 @@ pub fn read_git_metadata(path: &Path) -> Result<GitMetadata> {
         .ok()
         .and_then(|s| s.rsplit('/').next().map(|v| v.trim().to_string()));
 
+    let upstream_tracking = read_upstream_tracking(path).ok();
     let remotes = parse_remotes(path)?;
 
     Ok(GitMetadata {
@@ -65,6 +68,104 @@ pub fn read_git_metadata(path: &Path) -> Result<GitMetadata> {
         is_dirty,
         last_commit_at,
         remotes,
+        upstream_tracking,
+    })
+}
+
+pub fn read_upstream_tracking(path: &Path) -> Result<UpstreamTracking> {
+    if !path.join(".git").exists() {
+        return Err(anyhow!("not a git repo: {}", path.display()));
+    }
+
+    let mut active_branch = run_git(path, ["branch", "--show-current"]).unwrap_or_default();
+    if active_branch.trim().is_empty() {
+        active_branch = run_git(path, ["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+    }
+    if active_branch.trim() == "HEAD" || active_branch.trim().is_empty() {
+        return Ok(UpstreamTracking {
+            upstream_branch: None,
+            ahead_count: 0,
+            behind_count: 0,
+            no_upstream_configured: true,
+            upstream_resolution_error: None,
+        });
+    }
+
+    let branch_remote = run_git(
+        path,
+        ["config", "--get", &format!("branch.{active_branch}.remote")],
+    )
+    .ok();
+    let branch_merge = run_git(
+        path,
+        ["config", "--get", &format!("branch.{active_branch}.merge")],
+    )
+    .ok();
+    let Some(remote) = branch_remote else {
+        return Ok(UpstreamTracking {
+            upstream_branch: None,
+            ahead_count: 0,
+            behind_count: 0,
+            no_upstream_configured: true,
+            upstream_resolution_error: None,
+        });
+    };
+    let Some(merge_ref) = branch_merge else {
+        return Ok(UpstreamTracking {
+            upstream_branch: None,
+            ahead_count: 0,
+            behind_count: 0,
+            no_upstream_configured: true,
+            upstream_resolution_error: None,
+        });
+    };
+    let merge_short = merge_ref
+        .trim()
+        .strip_prefix("refs/heads/")
+        .unwrap_or(merge_ref.trim());
+    let fallback_branch = format!("{}/{}", remote.trim(), merge_short);
+    let resolved_upstream = run_git(
+        path,
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .ok()
+    .filter(|s| !s.is_empty());
+    let upstream_branch = resolved_upstream
+        .clone()
+        .or_else(|| Some(fallback_branch.clone()));
+
+    let mut ahead_count = 0;
+    let mut behind_count = 0;
+    let mut upstream_resolution_error = None;
+    if let Some(resolved_ref) = resolved_upstream {
+        let revspec = format!("{resolved_ref}...HEAD");
+        match run_git(path, ["rev-list", "--left-right", "--count", &revspec]) {
+            Ok(counts) => {
+                let mut parts = counts.split_whitespace();
+                behind_count = parts
+                    .next()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
+                ahead_count = parts
+                    .next()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
+            }
+            Err(err) => {
+                upstream_resolution_error = Some(err.to_string());
+            }
+        }
+    } else {
+        upstream_resolution_error =
+            Some("upstream is configured but could not be resolved via `@{u}`".to_string());
+    }
+
+    Ok(UpstreamTracking {
+        upstream_branch,
+        ahead_count,
+        behind_count,
+        no_upstream_configured: false,
+        upstream_resolution_error,
     })
 }
 
@@ -188,4 +289,276 @@ fn run_git<const N: usize>(path: &Path, args: [&str; N]) -> Result<String> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{enrich_clone, read_upstream_tracking};
+    use anyhow::{Context, Result};
+    use gittriage_core::CloneRecord;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn run(path: &Path, args: &[&str]) -> Result<String> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .args(args)
+            .output()
+            .context("git command failed to spawn")?;
+        if !out.status.success() {
+            anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    fn init_repo(path: &Path) -> Result<()> {
+        run(path, &["init", "-b", "main"])?;
+        set_identity(path)?;
+        Ok(())
+    }
+
+    fn set_identity(path: &Path) -> Result<()> {
+        run(path, &["config", "user.email", "dev@example.com"])?;
+        run(path, &["config", "user.name", "Dev"])?;
+        Ok(())
+    }
+
+    fn commit_file(path: &Path, rel: &str, content: &str, msg: &str) -> Result<()> {
+        std::fs::write(path.join(rel), content)?;
+        run(path, &["add", rel])?;
+        run(path, &["commit", "-m", msg])?;
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_tracking_with_upstream_reports_ahead_behind() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let remote = tmp.path().join("remote.git");
+        let origin_seed = tmp.path().join("origin-seed");
+        let local = tmp.path().join("local");
+
+        run(
+            tmp.path(),
+            &["init", "--bare", remote.to_str().expect("utf8 path")],
+        )?;
+
+        std::fs::create_dir_all(&origin_seed)?;
+        init_repo(&origin_seed)?;
+        commit_file(&origin_seed, "seed.txt", "seed", "seed")?;
+        run(
+            &origin_seed,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote.to_str().expect("utf8 path"),
+            ],
+        )?;
+        run(&origin_seed, &["push", "-u", "origin", "main"])?;
+        run(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"])?;
+
+        run(
+            tmp.path(),
+            &[
+                "clone",
+                remote.to_str().expect("utf8 path"),
+                local.to_str().expect("utf8 path"),
+            ],
+        )?;
+        set_identity(&local)?;
+        commit_file(&local, "local.txt", "local", "local change")?;
+
+        commit_file(&origin_seed, "remote.txt", "remote", "remote change")?;
+        run(&origin_seed, &["push"])?;
+        run(&local, &["fetch", "origin"])?;
+
+        let tracking = read_upstream_tracking(&local)?;
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("origin/main"));
+        assert_eq!(tracking.ahead_count, 1);
+        assert_eq!(tracking.behind_count, 1);
+        assert!(!tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_resolution_error, None);
+        Ok(())
+    }
+
+    #[test]
+    fn enrich_clone_populates_upstream_tracking() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let remote = tmp.path().join("remote.git");
+        let origin_seed = tmp.path().join("origin-seed");
+        let local = tmp.path().join("local");
+
+        run(
+            tmp.path(),
+            &["init", "--bare", remote.to_str().expect("utf8 path")],
+        )?;
+        std::fs::create_dir_all(&origin_seed)?;
+        init_repo(&origin_seed)?;
+        commit_file(&origin_seed, "seed.txt", "seed", "seed")?;
+        run(
+            &origin_seed,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote.to_str().expect("utf8 path"),
+            ],
+        )?;
+        run(&origin_seed, &["push", "-u", "origin", "main"])?;
+        run(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"])?;
+
+        run(
+            tmp.path(),
+            &[
+                "clone",
+                remote.to_str().expect("utf8 path"),
+                local.to_str().expect("utf8 path"),
+            ],
+        )?;
+        let mut clone = CloneRecord {
+            id: "clone-1".into(),
+            path: local.to_string_lossy().to_string(),
+            display_name: "local".into(),
+            is_git: true,
+            head_oid: None,
+            active_branch: None,
+            default_branch: None,
+            is_dirty: false,
+            last_commit_at: None,
+            upstream_tracking: None,
+            size_bytes: None,
+            manifest_kind: None,
+            readme_title: None,
+            license_spdx: None,
+            fingerprint: None,
+            has_lockfile: false,
+            has_ci: false,
+            has_tests_dir: false,
+        };
+
+        let remotes = enrich_clone(&local, &mut clone)?;
+        assert!(!remotes.is_empty());
+        let tracking = clone
+            .upstream_tracking
+            .as_ref()
+            .expect("upstream tracking populated");
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("origin/main"));
+        assert_eq!(tracking.ahead_count, 0);
+        assert_eq!(tracking.behind_count, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_tracking_without_upstream_is_non_fatal() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        init_repo(tmp.path())?;
+        commit_file(tmp.path(), "a.txt", "a", "init")?;
+
+        let tracking = read_upstream_tracking(tmp.path())?;
+        assert!(tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_branch, None);
+        assert_eq!(tracking.ahead_count, 0);
+        assert_eq!(tracking.behind_count, 0);
+        assert_eq!(tracking.upstream_resolution_error, None);
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_tracking_detached_head_without_upstream() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        init_repo(tmp.path())?;
+        commit_file(tmp.path(), "a.txt", "a", "init")?;
+        let head = run(tmp.path(), &["rev-parse", "HEAD"])?;
+        run(tmp.path(), &["checkout", "--detach", &head])?;
+
+        let tracking = read_upstream_tracking(tmp.path())?;
+        assert!(tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_branch, None);
+        assert_eq!(tracking.upstream_resolution_error, None);
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_tracking_reports_broken_tracking_ref() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let remote = tmp.path().join("remote.git");
+        let origin_seed = tmp.path().join("origin-seed");
+        let local = tmp.path().join("local");
+
+        run(
+            tmp.path(),
+            &["init", "--bare", remote.to_str().expect("utf8 path")],
+        )?;
+        std::fs::create_dir_all(&origin_seed)?;
+        init_repo(&origin_seed)?;
+        commit_file(&origin_seed, "seed.txt", "seed", "seed")?;
+        run(
+            &origin_seed,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote.to_str().expect("utf8 path"),
+            ],
+        )?;
+        run(&origin_seed, &["push", "-u", "origin", "main"])?;
+        run(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"])?;
+        run(
+            tmp.path(),
+            &[
+                "clone",
+                remote.to_str().expect("utf8 path"),
+                local.to_str().expect("utf8 path"),
+            ],
+        )?;
+
+        run(&local, &["update-ref", "-d", "refs/remotes/origin/main"])?;
+        let tracking = read_upstream_tracking(&local)?;
+        assert!(!tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("origin/main"));
+        assert_eq!(tracking.ahead_count, 0);
+        assert_eq!(tracking.behind_count, 0);
+        assert!(tracking.upstream_resolution_error.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_tracking_with_local_branch_upstream_uses_resolved_ref() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        init_repo(tmp.path())?;
+        commit_file(tmp.path(), "seed.txt", "seed", "seed")?;
+        run(tmp.path(), &["checkout", "-b", "base"])?;
+        commit_file(tmp.path(), "base.txt", "base", "base commit")?;
+        run(tmp.path(), &["checkout", "-b", "feature"])?;
+        run(tmp.path(), &["branch", "--set-upstream-to=base", "feature"])?;
+        commit_file(tmp.path(), "feature.txt", "feature", "feature commit")?;
+
+        let tracking = read_upstream_tracking(tmp.path())?;
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("base"));
+        assert_eq!(tracking.ahead_count, 1);
+        assert_eq!(tracking.behind_count, 0);
+        assert!(!tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_resolution_error, None);
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_tracking_unborn_head_reads_branch_config() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        run(tmp.path(), &["init", "-b", "main"])?;
+        run(tmp.path(), &["config", "branch.main.remote", "origin"])?;
+        run(
+            tmp.path(),
+            &["config", "branch.main.merge", "refs/heads/main"],
+        )?;
+
+        let tracking = read_upstream_tracking(tmp.path())?;
+        assert!(!tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("origin/main"));
+        assert_eq!(tracking.ahead_count, 0);
+        assert_eq!(tracking.behind_count, 0);
+        assert!(tracking.upstream_resolution_error.is_some());
+        Ok(())
+    }
 }

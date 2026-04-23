@@ -30,6 +30,7 @@ fn replace_clone_remote_links_replaces_existing_rows() {
         default_branch: None,
         is_dirty: false,
         last_commit_at: None,
+        upstream_tracking: None,
         size_bytes: None,
         manifest_kind: None,
         readme_title: None,

@@ -6,7 +6,7 @@ use std::path::Path;
 
 use gittriage_core::{
     ActionType, CloneRecord, CloneRemoteLink, ClusterStatus, InventorySnapshot, MemberKind,
-    PlanDocument, Priority, RemoteRecord, RunRecord, RunScanStats,
+    PlanDocument, Priority, RemoteRecord, RunRecord, RunScanStats, UpstreamTracking,
 };
 use uuid::Uuid;
 
@@ -65,6 +65,56 @@ impl Database {
                  INSERT OR IGNORE INTO gittriage_meta (key, value) VALUES ('schema_version', '1');",
             )
             .context("failed to create gittriage_meta table")?;
+
+        self.migrate_clone_upstream_tracking_columns()?;
+
+        Ok(())
+    }
+
+    fn migrate_clone_upstream_tracking_columns(&self) -> Result<()> {
+        let has_column = |name: &str| -> Result<bool> {
+            let sql = format!(
+                "SELECT COUNT(*) FROM pragma_table_info('clones') WHERE name = '{}'",
+                name
+            );
+            let n: i64 = self
+                .conn
+                .query_row(&sql, [], |row| row.get(0))
+                .context("inspect clones table columns")?;
+            Ok(n > 0)
+        };
+
+        if !has_column("upstream_branch")? {
+            self.conn
+                .execute("ALTER TABLE clones ADD COLUMN upstream_branch TEXT", [])
+                .context("add clones.upstream_branch")?;
+        }
+        if !has_column("ahead_count")? {
+            self.conn
+                .execute("ALTER TABLE clones ADD COLUMN ahead_count INTEGER", [])
+                .context("add clones.ahead_count")?;
+        }
+        if !has_column("behind_count")? {
+            self.conn
+                .execute("ALTER TABLE clones ADD COLUMN behind_count INTEGER", [])
+                .context("add clones.behind_count")?;
+        }
+        if !has_column("no_upstream_configured")? {
+            self.conn
+                .execute(
+                    "ALTER TABLE clones ADD COLUMN no_upstream_configured INTEGER",
+                    [],
+                )
+                .context("add clones.no_upstream_configured")?;
+        }
+        if !has_column("upstream_resolution_error")? {
+            self.conn
+                .execute(
+                    "ALTER TABLE clones ADD COLUMN upstream_resolution_error TEXT",
+                    [],
+                )
+                .context("add clones.upstream_resolution_error")?;
+        }
 
         Ok(())
     }
@@ -152,7 +202,7 @@ impl Database {
         let stats_json = run
             .stats
             .as_ref()
-            .map(|s| serde_json::to_string(s))
+            .map(serde_json::to_string)
             .transpose()
             .context("serialize run.stats")?;
         self.conn.execute(
@@ -205,9 +255,11 @@ impl Database {
                 r#"
                 INSERT OR REPLACE INTO clones
                 (id, repo_id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
-                 last_commit_at, size_bytes, manifest_kind, readme_title, license_spdx, fingerprint,
-                 scan_run_id, created_at, updated_at)
-                VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?16), ?16)
+                 last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
+                 upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
+                 fingerprint, scan_run_id, created_at, updated_at)
+                VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                        ?16, ?17, ?18, ?19, ?20, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?21), ?21)
                 "#,
                 params![
                     clone.id,
@@ -219,6 +271,16 @@ impl Database {
                     clone.default_branch,
                     clone.is_dirty as i32,
                     clone.last_commit_at.map(|dt| dt.to_rfc3339()),
+                    clone.upstream_tracking.as_ref().and_then(|t| t.upstream_branch.clone()),
+                    clone.upstream_tracking.as_ref().map(|t| t.ahead_count as i64),
+                    clone.upstream_tracking.as_ref().map(|t| t.behind_count as i64),
+                    clone.upstream_tracking
+                        .as_ref()
+                        .map(|t| if t.no_upstream_configured { 1_i64 } else { 0_i64 }),
+                    clone
+                        .upstream_tracking
+                        .as_ref()
+                        .and_then(|t| t.upstream_resolution_error.clone()),
                     clone.size_bytes.map(|v| v as i64),
                     clone.manifest_kind.as_ref().map(|m| format!("{m:?}")),
                     clone.readme_title,
@@ -292,7 +354,9 @@ impl Database {
         let mut clones_stmt = self.conn.prepare(
             r#"
             SELECT id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
-                   last_commit_at, size_bytes, manifest_kind, readme_title, license_spdx, fingerprint
+                   last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
+                   upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
+                   fingerprint
             FROM clones
             ORDER BY updated_at DESC
             "#,
@@ -313,8 +377,37 @@ impl Database {
                         .get::<_, Option<String>>(8)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|dt| dt.with_timezone(&Utc)),
-                    size_bytes: row.get::<_, Option<i64>>(9)?.map(|v| v as u64),
-                    manifest_kind: row.get::<_, Option<String>>(10)?.and_then(|s| {
+                    upstream_tracking: {
+                        let upstream_branch: Option<String> = row.get(9)?;
+                        let ahead_count: Option<i64> = row.get(10)?;
+                        let behind_count: Option<i64> = row.get(11)?;
+                        let no_upstream_configured: Option<i64> = row.get(12)?;
+                        let upstream_resolution_error: Option<String> = row.get(13)?;
+                        match (
+                            upstream_branch,
+                            ahead_count,
+                            behind_count,
+                            no_upstream_configured,
+                            upstream_resolution_error,
+                        ) {
+                            (None, None, None, None, None) => None,
+                            (
+                                upstream_branch,
+                                ahead_count,
+                                behind_count,
+                                no_upstream_configured,
+                                upstream_resolution_error,
+                            ) => Some(UpstreamTracking {
+                                upstream_branch,
+                                ahead_count: ahead_count.unwrap_or(0) as u32,
+                                behind_count: behind_count.unwrap_or(0) as u32,
+                                no_upstream_configured: no_upstream_configured.unwrap_or(0) != 0,
+                                upstream_resolution_error,
+                            }),
+                        }
+                    },
+                    size_bytes: row.get::<_, Option<i64>>(14)?.map(|v| v as u64),
+                    manifest_kind: row.get::<_, Option<String>>(15)?.and_then(|s| {
                         match s.as_str() {
                             "Cargo" => Some(gittriage_core::ManifestKind::Cargo),
                             "PackageJson" => Some(gittriage_core::ManifestKind::PackageJson),
@@ -327,9 +420,9 @@ impl Database {
                             _ => None,
                         }
                     }),
-                    readme_title: row.get(11)?,
-                    license_spdx: row.get(12)?,
-                    fingerprint: row.get(13)?,
+                    readme_title: row.get(16)?,
+                    license_spdx: row.get(17)?,
+                    fingerprint: row.get(18)?,
                     has_lockfile: false,
                     has_ci: false,
                     has_tests_dir: false,
@@ -439,7 +532,7 @@ impl Database {
         let stats_json = run
             .stats
             .as_ref()
-            .map(|s| serde_json::to_string(s))
+            .map(serde_json::to_string)
             .transpose()
             .context("serialize run.stats for import")?;
 
@@ -465,9 +558,11 @@ impl Database {
                 r#"
                 INSERT OR REPLACE INTO clones
                 (id, repo_id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
-                 last_commit_at, size_bytes, manifest_kind, readme_title, license_spdx, fingerprint,
-                 scan_run_id, created_at, updated_at)
-                VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)
+                 last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
+                 upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
+                 fingerprint, scan_run_id, created_at, updated_at)
+                VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                        ?16, ?17, ?18, ?19, ?20, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?21), ?21)
                 "#,
                 params![
                     clone.id,
@@ -479,6 +574,16 @@ impl Database {
                     clone.default_branch,
                     clone.is_dirty as i32,
                     clone.last_commit_at.map(|dt| dt.to_rfc3339()),
+                    clone.upstream_tracking.as_ref().and_then(|t| t.upstream_branch.clone()),
+                    clone.upstream_tracking.as_ref().map(|t| t.ahead_count as i64),
+                    clone.upstream_tracking.as_ref().map(|t| t.behind_count as i64),
+                    clone.upstream_tracking
+                        .as_ref()
+                        .map(|t| if t.no_upstream_configured { 1_i64 } else { 0_i64 }),
+                    clone
+                        .upstream_tracking
+                        .as_ref()
+                        .and_then(|t| t.upstream_resolution_error.clone()),
                     clone.size_bytes.map(|v| v as i64),
                     clone.manifest_kind.as_ref().map(|m| format!("{m:?}")),
                     clone.readme_title,

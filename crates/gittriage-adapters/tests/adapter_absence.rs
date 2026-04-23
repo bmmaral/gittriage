@@ -32,6 +32,7 @@ fn make_plan(clone_id: &str, root_path: &str) -> (PlanDocument, InventorySnapsho
             default_branch: Some("main".into()),
             is_dirty: false,
             last_commit_at: Some(Utc::now()),
+            upstream_tracking: None,
             size_bytes: Some(1),
             manifest_kind: Some(ManifestKind::Cargo),
             readme_title: Some("proj".into()),
@@ -93,7 +94,10 @@ fn probe_all_returns_four_entries() {
 
 #[test]
 fn support_tiers_are_assigned() {
-    assert_eq!(ExternalTool::Gitleaks.support_tier(), SupportTier::OfficiallySupported);
+    assert_eq!(
+        ExternalTool::Gitleaks.support_tier(),
+        SupportTier::OfficiallySupported
+    );
     assert_eq!(ExternalTool::Jscpd.support_tier(), SupportTier::BestEffort);
 }
 

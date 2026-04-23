@@ -18,6 +18,7 @@ fn sample_clone(id: &str, name: &str) -> CloneRecord {
         default_branch: Some("main".into()),
         is_dirty: false,
         last_commit_at: Some(Utc::now()),
+        upstream_tracking: None,
         size_bytes: None,
         manifest_kind: Some(ManifestKind::Cargo),
         readme_title: Some(name.into()),

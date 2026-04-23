@@ -1,7 +1,7 @@
 use chrono::{Duration, Utc};
 use gittriage_agent::{
-    agent_summary, automation_verdict_for_cluster, check_path, preflight, resolve_target,
-    list_duplicate_groups, list_unsafe_targets, AutomationVerdictLabel, PathDisposition,
+    agent_summary, automation_verdict_for_cluster, check_path, list_duplicate_groups,
+    list_unsafe_targets, preflight, resolve_target, AutomationVerdictLabel, PathDisposition,
 };
 use gittriage_core::{
     ActionType, CloneRecord, CloneRemoteLink, ClusterMember, ClusterPlan, ClusterRecord,
@@ -22,6 +22,7 @@ fn clone(id: &str, path: &str) -> CloneRecord {
         default_branch: Some("main".into()),
         is_dirty: false,
         last_commit_at: Some(Utc::now()),
+        upstream_tracking: None,
         size_bytes: Some(1),
         manifest_kind: Some(ManifestKind::Cargo),
         readme_title: Some("proj".into()),
@@ -65,6 +66,7 @@ fn clone_record(id: &str, path: &str, is_dirty: bool) -> CloneRecord {
         default_branch: Some("main".into()),
         is_dirty,
         last_commit_at: Some(Utc::now()),
+        upstream_tracking: None,
         size_bytes: Some(123),
         manifest_kind: Some(ManifestKind::Cargo),
         readme_title: Some("Example".into()),
@@ -192,13 +194,21 @@ fn preflight_and_verdict_match_for_resolved_cluster() {
 fn check_path_distinguishes_canonical_and_alternate() {
     let (snapshot, plan) = resolved_duplicate_fixture();
 
-    let canon = check_path(&plan, &snapshot, PathBuf::from("/tmp/ws/canon/src").as_path());
+    let canon = check_path(
+        &plan,
+        &snapshot,
+        PathBuf::from("/tmp/ws/canon/src").as_path(),
+    );
     assert_eq!(canon.disposition, PathDisposition::Canonical);
     assert!(!canon.is_wrong_clone);
     assert_eq!(canon.canonical_path.as_deref(), Some("/tmp/ws/canon"));
     assert!(canon.guidance.contains("canonical checkout"));
 
-    let alt = check_path(&plan, &snapshot, PathBuf::from("/tmp/ws/alt/tests").as_path());
+    let alt = check_path(
+        &plan,
+        &snapshot,
+        PathBuf::from("/tmp/ws/alt/tests").as_path(),
+    );
     assert_eq!(alt.disposition, PathDisposition::NonCanonicalAlternate);
     assert!(alt.is_wrong_clone);
     assert_eq!(alt.canonical_path.as_deref(), Some("/tmp/ws/canon"));
@@ -224,7 +234,10 @@ fn unresolved_outputs_fail_closed() {
 
     let pre = preflight(&plan, &snapshot, "missing");
     assert!(pre.verdict.unsafe_for_automation);
-    assert_eq!(pre.verdict.automation_verdict, AutomationVerdictLabel::Blocked);
+    assert_eq!(
+        pre.verdict.automation_verdict,
+        AutomationVerdictLabel::Blocked
+    );
     assert_eq!(pre.recommended_next_action, "run_scan_and_resolve_target");
 
     let path = check_path(&plan, &snapshot, PathBuf::from("/does/not/exist").as_path());
@@ -244,7 +257,10 @@ fn summary_lists_duplicates_unsafe_targets_and_workspace_filtering() {
     assert_eq!(full.kind, "gittriage_agent_summary");
     assert_eq!(full.total_clusters_considered, 1);
     assert_eq!(full.duplicate_groups.len(), 1);
-    assert_eq!(full.duplicate_groups[0].canonical_path.as_deref(), Some("/tmp/ws/canon"));
+    assert_eq!(
+        full.duplicate_groups[0].canonical_path.as_deref(),
+        Some("/tmp/ws/canon")
+    );
     assert_eq!(full.unsafe_targets.len(), 1);
     assert!(full.unsafe_targets[0].reason.contains("dirty worktree"));
     assert_eq!(full.total_unsafe_for_automation, 1);
@@ -408,5 +424,9 @@ fn remote_only_cluster_suggests_clone_but_verdict_stays_conservative() {
         .actions
         .iter()
         .any(|a| a.action_type == ActionType::CloneLocalWorkspace));
-    assert!(cp.cluster.members.iter().all(|m| m.kind == MemberKind::Remote));
+    assert!(cp
+        .cluster
+        .members
+        .iter()
+        .all(|m| m.kind == MemberKind::Remote));
 }
