@@ -1,0 +1,82 @@
+{
+  "name": "freshest_clone_wins",
+  "notes": "Freshest clone should win when everything else is comparable.",
+  "expected": {
+    "cluster_count": 1,
+    "cluster_key": "url:github.com/acme/proj",
+    "canonical_clone_id": "clone-new",
+    "canonical_remote_id": "remote-1"
+  },
+  "snapshot": {
+    "clones": [
+      {
+        "is_git": true,
+        "head_oid": "oid-old",
+        "active_branch": "main",
+        "default_branch": "main",
+        "is_dirty": false,
+        "last_commit_at": "2025-01-01T00:00:00Z",
+        "upstream_tracking": null,
+        "size_bytes": 1024,
+        "manifest_kind": "Cargo",
+        "readme_title": "proj",
+        "license_spdx": "MIT",
+        "fingerprint": "fp-old",
+        "has_lockfile": false,
+        "has_ci": false,
+        "has_tests_dir": false,
+        "id": "clone-old",
+        "path": "/dev/old",
+        "display_name": "proj"
+      },
+      {
+        "is_git": true,
+        "head_oid": "oid-new",
+        "active_branch": "main",
+        "default_branch": "main",
+        "is_dirty": false,
+        "last_commit_at": "2026-01-01T00:00:00Z",
+        "upstream_tracking": null,
+        "size_bytes": 1024,
+        "manifest_kind": "Cargo",
+        "readme_title": "proj",
+        "license_spdx": "MIT",
+        "fingerprint": "fp-new",
+        "has_lockfile": false,
+        "has_ci": false,
+        "has_tests_dir": false,
+        "id": "clone-new",
+        "path": "/dev/new",
+        "display_name": "proj"
+      }
+    ],
+    "remotes": [
+      {
+        "id": "remote-1",
+        "provider": "github",
+        "owner": "acme",
+        "name": "proj",
+        "full_name": "acme/proj",
+        "url": "https://github.com/acme/proj",
+        "normalized_url": "github.com/acme/proj",
+        "default_branch": "main",
+        "is_fork": false,
+        "is_archived": false,
+        "is_private": false,
+        "pushed_at": "2026-01-02T00:00:00Z"
+      }
+    ],
+    "links": [
+      {
+        "clone_id": "clone-old",
+        "remote_id": "remote-1",
+        "relationship": "origin"
+      },
+      {
+        "clone_id": "clone-new",
+        "remote_id": "remote-1",
+        "relationship": "origin"
+      }
+    ]
+  }
+}

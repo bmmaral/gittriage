@@ -35,9 +35,11 @@ jobs:
           CFG="$ARTIFACT_DIR/gittriage.toml"
           DB="$ARTIFACT_DIR/state.db"
           cat > "$CFG" <<EOF
-db_path = "$DB"
-default_roots = []
-EOF
+          db_path = "$DB"
+          default_roots = []
+          EOF
+          export GITTRIAGE_CANONICAL_TRUTH_SUMMARY_DIR="$ARTIFACT_DIR"
+          cargo test -p gittriage-plan --test canonical_truth_benchmark -- --nocapture
           cargo build -p gittriage
           target/debug/gittriage --config "$CFG" scan .
           target/debug/gittriage --config "$CFG" plan --write "$ARTIFACT_DIR/plan.json" --no-merge-base

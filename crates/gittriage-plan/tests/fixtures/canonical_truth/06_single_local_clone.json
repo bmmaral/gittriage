@@ -1,0 +1,36 @@
+{
+  "name": "single_local_clone",
+  "notes": "A single local checkout should remain canonical with no competing member.",
+  "expected": {
+    "cluster_count": 1,
+    "cluster_key": "name:solo",
+    "canonical_clone_id": "solo-1",
+    "canonical_remote_id": null
+  },
+  "snapshot": {
+    "clones": [
+      {
+        "is_git": true,
+        "head_oid": "oid-solo",
+        "active_branch": "main",
+        "default_branch": "main",
+        "is_dirty": false,
+        "last_commit_at": "2026-01-01T00:00:00Z",
+        "upstream_tracking": null,
+        "size_bytes": 1024,
+        "manifest_kind": "Cargo",
+        "readme_title": "proj",
+        "license_spdx": "MIT",
+        "fingerprint": "fp-solo",
+        "has_lockfile": false,
+        "has_ci": false,
+        "has_tests_dir": false,
+        "id": "solo-1",
+        "path": "/dev/solo",
+        "display_name": "solo"
+      }
+    ],
+    "remotes": [],
+    "links": []
+  }
+}

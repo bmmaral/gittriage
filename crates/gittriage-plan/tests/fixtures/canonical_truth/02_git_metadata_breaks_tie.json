@@ -1,0 +1,56 @@
+{
+  "name": "git_metadata_breaks_tie",
+  "notes": "A git checkout should beat a non-git folder when the timestamps tie.",
+  "expected": {
+    "cluster_count": 1,
+    "cluster_key": "name:proj",
+    "canonical_clone_id": "git-copy",
+    "canonical_remote_id": null
+  },
+  "snapshot": {
+    "clones": [
+      {
+        "is_git": true,
+        "head_oid": "oid-git",
+        "active_branch": "main",
+        "default_branch": "main",
+        "is_dirty": false,
+        "last_commit_at": "2026-01-01T00:00:00Z",
+        "upstream_tracking": null,
+        "size_bytes": 1024,
+        "manifest_kind": "Cargo",
+        "readme_title": "proj",
+        "license_spdx": "MIT",
+        "fingerprint": "fp-git",
+        "has_lockfile": false,
+        "has_ci": false,
+        "has_tests_dir": false,
+        "id": "git-copy",
+        "path": "/dev/git-copy",
+        "display_name": "proj"
+      },
+      {
+        "is_git": false,
+        "head_oid": null,
+        "active_branch": null,
+        "default_branch": null,
+        "is_dirty": false,
+        "last_commit_at": "2026-01-01T00:00:00Z",
+        "upstream_tracking": null,
+        "size_bytes": 1024,
+        "manifest_kind": "Cargo",
+        "readme_title": "proj",
+        "license_spdx": "MIT",
+        "fingerprint": "fp-bare",
+        "has_lockfile": false,
+        "has_ci": false,
+        "has_tests_dir": false,
+        "id": "bare-copy",
+        "path": "/dev/bare-copy",
+        "display_name": "proj"
+      }
+    ],
+    "remotes": [],
+    "links": []
+  }
+}

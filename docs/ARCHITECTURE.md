@@ -80,6 +80,14 @@ scores + evidence (`gittriage score` or inside `gittriage plan`)
 plan.json + persisted plan row (`plan`) / report.md (`report`) / interactive browse (`tui`)
 ```
 
+## Validation loop
+
+GitTriage keeps correctness checks close to the planner:
+
+- `gittriage-plan` includes a corpus-driven canonical truth benchmark under `crates/gittriage-plan/tests/fixtures/canonical_truth/` and a test harness that compares actual canonical selection against expected truth.
+- The `regression-dashboard` workflow runs the benchmark, then uploads the benchmark summary together with `plan.json`, `score.json`, and `summary.json` as drift artifacts.
+- Upstream tracking metadata from `gittriage-git` is part of the same feedback loop so CI can detect canonical drift as branch state changes.
+
 ## Why SQLite first?
 
 Because GitTriage is a local-first CLI and needs:

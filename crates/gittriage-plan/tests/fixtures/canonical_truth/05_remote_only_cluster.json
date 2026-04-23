@@ -1,0 +1,30 @@
+{
+  "name": "remote_only_cluster",
+  "notes": "A remote-only cluster should canonicalize the remote row, not invent a clone.",
+  "expected": {
+    "cluster_count": 1,
+    "cluster_key": "url:github.com/acme/orphan",
+    "canonical_clone_id": null,
+    "canonical_remote_id": "remote-orphan"
+  },
+  "snapshot": {
+    "clones": [],
+    "remotes": [
+      {
+        "id": "remote-orphan",
+        "provider": "github",
+        "owner": "acme",
+        "name": "orphan",
+        "full_name": "acme/orphan",
+        "url": "https://github.com/acme/orphan",
+        "normalized_url": "github.com/acme/orphan",
+        "default_branch": "main",
+        "is_fork": false,
+        "is_archived": false,
+        "is_private": false,
+        "pushed_at": "2026-01-02T00:00:00Z"
+      }
+    ],
+    "links": []
+  }
+}

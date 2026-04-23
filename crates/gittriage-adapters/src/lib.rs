@@ -85,7 +85,7 @@ pub enum SupportTier {
 pub fn probe_all() -> Vec<(ExternalTool, bool)> {
     ExternalTool::ALL
         .into_iter()
-        .map(|t| (t, which::which(t.bin_name()).is_ok()))
+        .map(|t| (t, tool_on_path(t.bin_name())))
         .collect()
 }
 
@@ -286,9 +286,22 @@ fn adapter_timeout() -> Duration {
 }
 
 fn run_capture(bin: &str, args: &[&str], cwd: &Path) -> Option<(i32, String)> {
-    let _ = which::which(bin).ok()?;
+    let _ = tool_on_path(bin).then_some(())?;
     let timeout = adapter_timeout();
 
+    #[cfg(windows)]
+    let mut child = {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(bin).args(args);
+        command
+            .current_dir(cwd)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .ok()?
+    };
+
+    #[cfg(not(windows))]
     let mut child = Command::new(bin)
         .args(args)
         .current_dir(cwd)
@@ -357,6 +370,23 @@ fn run_capture(bin: &str, args: &[&str], cwd: &Path) -> Option<(i32, String)> {
             }
         }
     }
+}
+
+fn tool_on_path(bin: &str) -> bool {
+    if which::which(bin).is_ok() {
+        return true;
+    }
+
+    #[cfg(windows)]
+    {
+        for candidate in [format!("{bin}.cmd"), format!("{bin}.bat"), format!("{bin}.exe")] {
+            if which::which(candidate).is_ok() {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn evid(clone_id: &str, kind: &str, delta: f64, detail: String) -> EvidenceItem {
