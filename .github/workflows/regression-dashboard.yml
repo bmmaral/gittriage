@@ -1,0 +1,55 @@
+name: regression-dashboard
+
+on:
+  workflow_run:
+    workflows: ["rust-ci"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  dashboard:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build regression artifacts
+        run: |
+          set -eux
+          ARTIFACT_DIR="$RUNNER_TEMP/gittriage-regression"
+          mkdir -p "$ARTIFACT_DIR"
+          CFG="$ARTIFACT_DIR/gittriage.toml"
+          DB="$ARTIFACT_DIR/state.db"
+          cat > "$CFG" <<EOF
+db_path = "$DB"
+default_roots = []
+EOF
+          cargo build -p gittriage
+          target/debug/gittriage --config "$CFG" scan .
+          target/debug/gittriage --config "$CFG" plan --write "$ARTIFACT_DIR/plan.json" --no-merge-base
+          target/debug/gittriage --config "$CFG" score --format json --no-merge-base > "$ARTIFACT_DIR/score.json"
+          target/debug/gittriage --config "$CFG" summary --agent . --format json --no-merge-base > "$ARTIFACT_DIR/summary.json"
+          python scripts/ci_regression_dashboard.py \
+            "$ARTIFACT_DIR/plan.json" \
+            "$ARTIFACT_DIR/summary.json" \
+            "$ARTIFACT_DIR/dashboard.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gittriage-regression-${{ github.event.workflow_run.head_sha }}
+          path: ${{ runner.temp }}/gittriage-regression/*.json
+          if-no-files-found: error

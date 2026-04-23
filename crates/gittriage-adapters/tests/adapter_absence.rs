@@ -76,6 +76,30 @@ fn make_plan(clone_id: &str, root_path: &str) -> (PlanDocument, InventorySnapsho
     (plan, snapshot)
 }
 
+fn write_fake_tool(bin_dir: &std::path::Path, tool: &str) {
+    #[cfg(windows)]
+    let (path, script) = (
+        bin_dir.join(format!("{tool}.cmd")),
+        format!("@echo off\r\necho {tool}-ok\r\nexit /b 0\r\n"),
+    );
+
+    #[cfg(not(windows))]
+    let (path, script) = (
+        bin_dir.join(tool),
+        format!("#!/bin/sh\necho {tool}-ok\nexit 0\n"),
+    );
+
+    fs::write(&path, script).unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+    }
+}
+
 #[test]
 fn tool_metadata_is_consistent() {
     for tool in ExternalTool::ALL {
@@ -268,16 +292,7 @@ fn fake_adapter_binaries_produce_evidence_items() {
     fs::create_dir_all(&root).unwrap();
 
     for tool in ["gitleaks", "semgrep", "jscpd", "syft"] {
-        let script = format!("#!/bin/sh\necho {tool}-ok\nexit 0\n");
-        let path = bin_dir.join(tool);
-        fs::write(&path, script).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&path).unwrap().permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&path, perms).unwrap();
-        }
+        write_fake_tool(&bin_dir, tool);
     }
 
     let old_path = env::var("PATH").unwrap_or_default();

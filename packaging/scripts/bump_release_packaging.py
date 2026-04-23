@@ -6,14 +6,29 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
-import urllib.request
 
 
 def _read_url(url: str) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "gittriage-release-packaging"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return r.read()
+    completed = subprocess.run(
+        [
+            "curl",
+            "-fsSL",
+            "--retry",
+            "3",
+            "--connect-timeout",
+            "30",
+            "-H",
+            "User-Agent: gittriage-release-packaging",
+            url,
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+    )
+    return completed.stdout
 
 
 def _sha256_file(url: str) -> str:
