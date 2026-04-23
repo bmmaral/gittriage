@@ -28,6 +28,7 @@ pub struct UpstreamTracking {
     pub ahead_count: u32,
     pub behind_count: u32,
     pub no_upstream_configured: bool,
+    pub upstream_resolution_error: Option<String>,
 }
 
 pub fn enrich_clone(path: &Path, clone: &mut CloneRecord) -> Result<Vec<GitRemote>> {
@@ -84,35 +85,77 @@ pub fn read_upstream_tracking(path: &Path) -> Result<UpstreamTracking> {
         return Err(anyhow!("not a git repo: {}", path.display()));
     }
 
-    let upstream_branch = match run_git(
-        path,
-        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-    ) {
-        Ok(v) => Some(v),
-        Err(_) => None,
-    };
-
-    if upstream_branch.is_none() {
+    let active_branch = run_git(path, ["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+    if active_branch.trim() == "HEAD" {
         return Ok(UpstreamTracking {
             upstream_branch: None,
             ahead_count: 0,
             behind_count: 0,
             no_upstream_configured: true,
+            upstream_resolution_error: None,
         });
     }
 
+    let branch_remote = run_git(
+        path,
+        ["config", "--get", &format!("branch.{active_branch}.remote")],
+    )
+    .ok();
+    let branch_merge = run_git(
+        path,
+        ["config", "--get", &format!("branch.{active_branch}.merge")],
+    )
+    .ok();
+    let Some(remote) = branch_remote else {
+        return Ok(UpstreamTracking {
+            upstream_branch: None,
+            ahead_count: 0,
+            behind_count: 0,
+            no_upstream_configured: true,
+            upstream_resolution_error: None,
+        });
+    };
+    let Some(merge_ref) = branch_merge else {
+        return Ok(UpstreamTracking {
+            upstream_branch: None,
+            ahead_count: 0,
+            behind_count: 0,
+            no_upstream_configured: true,
+            upstream_resolution_error: None,
+        });
+    };
+    let merge_short = merge_ref
+        .trim()
+        .strip_prefix("refs/heads/")
+        .unwrap_or(merge_ref.trim());
+    let fallback_branch = format!("{}/{}", remote.trim(), merge_short);
+    let upstream_branch = run_git(
+        path,
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .ok()
+    .filter(|s| !s.is_empty())
+    .or_else(|| Some(fallback_branch.clone()));
+
     let mut ahead_count = 0;
     let mut behind_count = 0;
-    if let Ok(counts) = run_git(path, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]) {
-        let mut parts = counts.split_whitespace();
-        behind_count = parts
-            .next()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(0);
-        ahead_count = parts
-            .next()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(0);
+    let mut upstream_resolution_error = None;
+    let revspec = format!("{fallback_branch}...HEAD");
+    match run_git(path, ["rev-list", "--left-right", "--count", &revspec]) {
+        Ok(counts) => {
+            let mut parts = counts.split_whitespace();
+            behind_count = parts
+                .next()
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(0);
+            ahead_count = parts
+                .next()
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(0);
+        }
+        Err(err) => {
+            upstream_resolution_error = Some(err.to_string());
+        }
     }
 
     Ok(UpstreamTracking {
@@ -120,6 +163,7 @@ pub fn read_upstream_tracking(path: &Path) -> Result<UpstreamTracking> {
         ahead_count,
         behind_count,
         no_upstream_configured: false,
+        upstream_resolution_error,
     })
 }
 
@@ -334,6 +378,7 @@ mod tests {
         assert_eq!(tracking.ahead_count, 1);
         assert_eq!(tracking.behind_count, 1);
         assert!(!tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_resolution_error, None);
         Ok(())
     }
 
@@ -348,6 +393,7 @@ mod tests {
         assert_eq!(tracking.upstream_branch, None);
         assert_eq!(tracking.ahead_count, 0);
         assert_eq!(tracking.behind_count, 0);
+        assert_eq!(tracking.upstream_resolution_error, None);
         Ok(())
     }
 
@@ -362,28 +408,51 @@ mod tests {
         let tracking = read_upstream_tracking(tmp.path())?;
         assert!(tracking.no_upstream_configured);
         assert_eq!(tracking.upstream_branch, None);
+        assert_eq!(tracking.upstream_resolution_error, None);
         Ok(())
     }
 
     #[test]
-    fn upstream_tracking_handles_git_failure_fallback() -> Result<()> {
+    fn upstream_tracking_reports_broken_tracking_ref() -> Result<()> {
         let tmp = tempfile::tempdir()?;
-        init_repo(tmp.path())?;
-        commit_file(tmp.path(), "a.txt", "a", "init")?;
+        let remote = tmp.path().join("remote.git");
+        let origin_seed = tmp.path().join("origin-seed");
+        let local = tmp.path().join("local");
+
+        run(
+            tmp.path(),
+            &["init", "--bare", remote.to_str().expect("utf8 path")],
+        )?;
+        std::fs::create_dir_all(&origin_seed)?;
+        init_repo(&origin_seed)?;
+        commit_file(&origin_seed, "seed.txt", "seed", "seed")?;
+        run(
+            &origin_seed,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote.to_str().expect("utf8 path"),
+            ],
+        )?;
+        run(&origin_seed, &["push", "-u", "origin", "main"])?;
+        run(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"])?;
         run(
             tmp.path(),
             &[
-                "update-ref",
-                "refs/remotes/origin/main",
-                "0000000000000000000000000000000000000000",
+                "clone",
+                remote.to_str().expect("utf8 path"),
+                local.to_str().expect("utf8 path"),
             ],
-        )
-        .ok();
+        )?;
 
-        let tracking = read_upstream_tracking(tmp.path())?;
-        assert!(tracking.no_upstream_configured);
+        run(&local, &["update-ref", "-d", "refs/remotes/origin/main"])?;
+        let tracking = read_upstream_tracking(&local)?;
+        assert!(!tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("origin/main"));
         assert_eq!(tracking.ahead_count, 0);
         assert_eq!(tracking.behind_count, 0);
+        assert!(tracking.upstream_resolution_error.is_some());
         Ok(())
     }
 }
