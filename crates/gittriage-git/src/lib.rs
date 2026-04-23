@@ -129,33 +129,40 @@ pub fn read_upstream_tracking(path: &Path) -> Result<UpstreamTracking> {
         .strip_prefix("refs/heads/")
         .unwrap_or(merge_ref.trim());
     let fallback_branch = format!("{}/{}", remote.trim(), merge_short);
-    let upstream_branch = run_git(
+    let resolved_upstream = run_git(
         path,
         ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
     )
     .ok()
-    .filter(|s| !s.is_empty())
-    .or_else(|| Some(fallback_branch.clone()));
+    .filter(|s| !s.is_empty());
+    let upstream_branch = resolved_upstream
+        .clone()
+        .or_else(|| Some(fallback_branch.clone()));
 
     let mut ahead_count = 0;
     let mut behind_count = 0;
     let mut upstream_resolution_error = None;
-    let revspec = format!("{fallback_branch}...HEAD");
-    match run_git(path, ["rev-list", "--left-right", "--count", &revspec]) {
-        Ok(counts) => {
-            let mut parts = counts.split_whitespace();
-            behind_count = parts
-                .next()
-                .and_then(|v| v.parse::<u32>().ok())
-                .unwrap_or(0);
-            ahead_count = parts
-                .next()
-                .and_then(|v| v.parse::<u32>().ok())
-                .unwrap_or(0);
+    if let Some(resolved_ref) = resolved_upstream {
+        let revspec = format!("{resolved_ref}...HEAD");
+        match run_git(path, ["rev-list", "--left-right", "--count", &revspec]) {
+            Ok(counts) => {
+                let mut parts = counts.split_whitespace();
+                behind_count = parts
+                    .next()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
+                ahead_count = parts
+                    .next()
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
+            }
+            Err(err) => {
+                upstream_resolution_error = Some(err.to_string());
+            }
         }
-        Err(err) => {
-            upstream_resolution_error = Some(err.to_string());
-        }
+    } else {
+        upstream_resolution_error =
+            Some("upstream is configured but could not be resolved via `@{u}`".to_string());
     }
 
     Ok(UpstreamTracking {
@@ -453,6 +460,26 @@ mod tests {
         assert_eq!(tracking.ahead_count, 0);
         assert_eq!(tracking.behind_count, 0);
         assert!(tracking.upstream_resolution_error.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_tracking_with_local_branch_upstream_uses_resolved_ref() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        init_repo(tmp.path())?;
+        commit_file(tmp.path(), "seed.txt", "seed", "seed")?;
+        run(tmp.path(), &["checkout", "-b", "base"])?;
+        commit_file(tmp.path(), "base.txt", "base", "base commit")?;
+        run(tmp.path(), &["checkout", "-b", "feature"])?;
+        run(tmp.path(), &["branch", "--set-upstream-to=base", "feature"])?;
+        commit_file(tmp.path(), "feature.txt", "feature", "feature commit")?;
+
+        let tracking = read_upstream_tracking(tmp.path())?;
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("base"));
+        assert_eq!(tracking.ahead_count, 1);
+        assert_eq!(tracking.behind_count, 0);
+        assert!(!tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_resolution_error, None);
         Ok(())
     }
 }
