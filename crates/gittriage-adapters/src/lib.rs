@@ -286,7 +286,7 @@ fn adapter_timeout() -> Duration {
 }
 
 fn run_capture(bin: &str, args: &[&str], cwd: &Path) -> Option<(i32, String)> {
-    let _ = tool_on_path(bin).then_some(())?;
+    tool_on_path(bin).then_some(())?;
     let timeout = adapter_timeout();
 
     #[cfg(windows)]

@@ -113,18 +113,31 @@ jobs:
   publish-homebrew-tap:
     needs: [linux-musl, macos, windows]
     runs-on: ubuntu-latest
-    if: secrets.HOMEBREW_TAP_TOKEN != ''
     steps:
+      - name: Check Homebrew tap token
+        id: gate
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.enabled == 'true'
         with:
           python-version: "3.12"
       - name: Render Homebrew formula
+        if: steps.gate.outputs.enabled == 'true'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: python packaging/scripts/bump_release_packaging.py homebrew > gittriage.rb
       - name: Push to tap
+        if: steps.gate.outputs.enabled == 'true'
         env:
           TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
@@ -145,13 +158,25 @@ jobs:
   publish-scoop-bucket:
     needs: [linux-musl, macos, windows]
     runs-on: ubuntu-latest
-    if: secrets.SCOOP_BUCKET_TOKEN != ''
     steps:
+      - name: Check Scoop bucket token
+        id: gate
+        env:
+          TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.enabled == 'true'
         with:
           python-version: "3.12"
       - name: Update manifest and push bucket
+        if: steps.gate.outputs.enabled == 'true'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -175,18 +200,32 @@ jobs:
   publish-chocolatey:
     needs: [linux-musl, macos, windows]
     runs-on: windows-latest
-    if: secrets.CHOCOLATEY_API_KEY != ''
     steps:
+      - name: Check Chocolatey API key
+        id: gate
+        shell: pwsh
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          if ($env:CHOCOLATEY_API_KEY) {
+            "enabled=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "enabled=false" >> $env:GITHUB_OUTPUT
+          }
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.enabled == 'true'
         with:
           python-version: "3.12"
       - name: Bump Chocolatey package files
+        if: steps.gate.outputs.enabled == 'true'
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: python packaging/scripts/bump_release_packaging.py chocolatey
       - name: Pack and push to Chocolatey
+        if: steps.gate.outputs.enabled == 'true'
         working-directory: packaging/chocolatey
         env:
           CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}

@@ -11,7 +11,7 @@
   "homepage": "https://github.com/bmmaral/gittriage",
   "bugs": "https://github.com/bmmaral/gittriage/issues",
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   },
   "bin": {
     "gittriage": "bin/gittriage.js"
