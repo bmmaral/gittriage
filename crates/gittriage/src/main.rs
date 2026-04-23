@@ -614,6 +614,7 @@ fn cmd_check_path(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_summary_agent(
     db: &Database,
     bundle: &ConfigBundle,

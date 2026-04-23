@@ -152,7 +152,7 @@ impl Database {
         let stats_json = run
             .stats
             .as_ref()
-            .map(|s| serde_json::to_string(s))
+            .map(serde_json::to_string)
             .transpose()
             .context("serialize run.stats")?;
         self.conn.execute(
@@ -439,7 +439,7 @@ impl Database {
         let stats_json = run
             .stats
             .as_ref()
-            .map(|s| serde_json::to_string(s))
+            .map(serde_json::to_string)
             .transpose()
             .context("serialize run.stats for import")?;
 

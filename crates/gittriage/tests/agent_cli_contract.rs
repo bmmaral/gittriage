@@ -132,7 +132,10 @@ fn agent_cli_contracts_are_consistent_for_unresolved_target() {
     assert_eq!(verdict["target"], "missing-target");
     assert_eq!(verdict["verdict"]["automation_verdict"], "blocked");
     assert_eq!(verdict["verdict"]["unsafe_for_automation"], true);
-    assert!(verdict["verdict"]["blocking_reasons"].as_array().unwrap().len() >= 1);
+    assert!(!verdict["verdict"]["blocking_reasons"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 
     let preflight = h.run_json(&h.with_config(&[
         "preflight",
@@ -145,7 +148,10 @@ fn agent_cli_contracts_are_consistent_for_unresolved_target() {
     assert_eq!(preflight["target"], "missing-target");
     assert_eq!(preflight["automation_verdict"], "blocked");
     assert_eq!(preflight["unsafe_for_automation"], true);
-    assert_eq!(preflight["recommended_next_action"], "run_scan_and_resolve_target");
+    assert_eq!(
+        preflight["recommended_next_action"],
+        "run_scan_and_resolve_target"
+    );
 
     let check = h.run_json(&h.with_config(&[
         "check-path",
@@ -187,7 +193,9 @@ fn agent_summary_endpoints_have_expected_shape_after_real_scan() {
             g["canonical_path"] == Value::String(h.repo_root.to_string_lossy().to_string())
                 && g["alternate_paths"]
                     .as_array()
-                    .map(|arr| arr.contains(&Value::String(h.alt_root.to_string_lossy().to_string())))
+                    .map(|arr| {
+                        arr.contains(&Value::String(h.alt_root.to_string_lossy().to_string()))
+                    })
                     .unwrap_or(false)
         }),
         "expected a duplicate group referencing the scanned repos: {summary}"

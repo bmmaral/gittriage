@@ -180,7 +180,7 @@ pub fn resolve_target(
     }
 
     let path_guess = expand_path_hint(q);
-    let by_path = if path_guess.as_os_str().len() > 0
+    let by_path = if !path_guess.as_os_str().is_empty()
         && (path_guess.exists() || q.contains('/') || q.contains('\\') || q.starts_with('~'))
     {
         cluster_for_path(plan, snapshot, &path_guess)

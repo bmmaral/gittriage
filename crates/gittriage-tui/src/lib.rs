@@ -1178,16 +1178,12 @@ impl App {
                     KeyCode::Char('k') | KeyCode::Up => {
                         self.evidence_list_state.select_previous();
                     }
-                    KeyCode::Char('g') => {
-                        if !self.evidence_lines.is_empty() {
-                            self.evidence_list_state.select(Some(0));
-                        }
+                    KeyCode::Char('g') if !self.evidence_lines.is_empty() => {
+                        self.evidence_list_state.select(Some(0));
                     }
-                    KeyCode::Char('G') => {
-                        if !self.evidence_lines.is_empty() {
-                            self.evidence_list_state
-                                .select(Some(self.evidence_lines.len() - 1));
-                        }
+                    KeyCode::Char('G') if !self.evidence_lines.is_empty() => {
+                        self.evidence_list_state
+                            .select(Some(self.evidence_lines.len() - 1));
                     }
                     _ => {}
                 }
@@ -1237,12 +1233,10 @@ impl App {
                 self.filter_editing = true;
                 self.filter_buffer = self.filter_applied.clone();
             }
-            KeyCode::Char('f') => {
-                if !self.filter_applied.is_empty() {
-                    self.filter_applied.clear();
-                    self.rebuild_ordered();
-                    self.status_msg = "Filter cleared".into();
-                }
+            KeyCode::Char('f') if !self.filter_applied.is_empty() => {
+                self.filter_applied.clear();
+                self.rebuild_ordered();
+                self.status_msg = "Filter cleared".into();
             }
             KeyCode::Tab => {
                 self.bottom_tab = self.bottom_tab.toggle();
@@ -1257,15 +1251,11 @@ impl App {
             KeyCode::Char('o') => self.export_plan(),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
-            KeyCode::Char('g') => {
-                if !self.ordered.is_empty() {
-                    self.table_state.select(Some(0));
-                }
+            KeyCode::Char('g') if !self.ordered.is_empty() => {
+                self.table_state.select(Some(0));
             }
-            KeyCode::Char('G') => {
-                if !self.ordered.is_empty() {
-                    self.table_state.select(Some(self.ordered.len() - 1));
-                }
+            KeyCode::Char('G') if !self.ordered.is_empty() => {
+                self.table_state.select(Some(self.ordered.len() - 1));
             }
             KeyCode::PageDown => self.move_selection(10),
             KeyCode::PageUp => self.move_selection(-10),

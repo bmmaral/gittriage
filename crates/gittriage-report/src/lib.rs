@@ -162,7 +162,7 @@ pub fn render_markdown_with(plan: &PlanDocument, extras: ReportExtras) -> Result
     out.push('\n');
 
     if extras.agent_preflight_headings {
-        if let (Some(ref inv), Some(ref ap)) = (
+        if let (Some(inv), Some(ap)) = (
             extras.inventory_snapshot.as_ref(),
             extras.agent_section_plan.as_ref(),
         ) {

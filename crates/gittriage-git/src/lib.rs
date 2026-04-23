@@ -85,8 +85,11 @@ pub fn read_upstream_tracking(path: &Path) -> Result<UpstreamTracking> {
         return Err(anyhow!("not a git repo: {}", path.display()));
     }
 
-    let active_branch = run_git(path, ["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
-    if active_branch.trim() == "HEAD" {
+    let mut active_branch = run_git(path, ["branch", "--show-current"]).unwrap_or_default();
+    if active_branch.trim().is_empty() {
+        active_branch = run_git(path, ["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+    }
+    if active_branch.trim() == "HEAD" || active_branch.trim().is_empty() {
         return Ok(UpstreamTracking {
             upstream_branch: None,
             ahead_count: 0,
@@ -311,10 +314,7 @@ mod tests {
             .output()
             .context("git command failed to spawn")?;
         if !out.status.success() {
-            anyhow::bail!(
-                "{}",
-                String::from_utf8_lossy(&out.stderr).trim().to_string()
-            );
+            anyhow::bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
@@ -480,6 +480,25 @@ mod tests {
         assert_eq!(tracking.behind_count, 0);
         assert!(!tracking.no_upstream_configured);
         assert_eq!(tracking.upstream_resolution_error, None);
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_tracking_unborn_head_reads_branch_config() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        run(tmp.path(), &["init", "-b", "main"])?;
+        run(tmp.path(), &["config", "branch.main.remote", "origin"])?;
+        run(
+            tmp.path(),
+            &["config", "branch.main.merge", "refs/heads/main"],
+        )?;
+
+        let tracking = read_upstream_tracking(tmp.path())?;
+        assert!(!tracking.no_upstream_configured);
+        assert_eq!(tracking.upstream_branch.as_deref(), Some("origin/main"));
+        assert_eq!(tracking.ahead_count, 0);
+        assert_eq!(tracking.behind_count, 0);
+        assert!(tracking.upstream_resolution_error.is_some());
         Ok(())
     }
 }
