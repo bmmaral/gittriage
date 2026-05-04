@@ -54,6 +54,13 @@ fn cluster_touches_workspace(
     if roots.is_empty() {
         return true;
     }
+    
+    // Normalize roots to absolute paths to prevent /tmp vs /private/tmp mismatches
+    // and correctly handle prefix logic
+    let norm_roots: Vec<PathBuf> = roots.iter()
+        .map(|r| r.canonicalize().unwrap_or_else(|_| r.clone()))
+        .collect();
+
     for m in &cp.cluster.members {
         if m.kind != MemberKind::Clone {
             continue;
@@ -62,12 +69,11 @@ fn cluster_touches_workspace(
             continue;
         };
         let p = Path::new(cl.path.as_str());
-        for root in roots {
-            if let (Ok(a), Ok(b)) = (p.canonicalize(), root.canonicalize()) {
-                if a == b || a.starts_with(&b) {
-                    return true;
-                }
-            } else if cl.path.contains(root.to_string_lossy().as_ref()) {
+        
+        let norm_p = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        
+        for root in &norm_roots {
+            if norm_p == *root || norm_p.starts_with(root) {
                 return true;
             }
         }
