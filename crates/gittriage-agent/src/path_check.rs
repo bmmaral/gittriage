@@ -56,7 +56,14 @@ fn longest_clone_for_path<'a>(
             let Some(cl) = snapshot.clones.iter().find(|c| c.id == m.id) else {
                 continue;
             };
-            let p = cl.path.trim_end_matches(['/', '\\']);
+            
+            let cl_path = Path::new(&cl.path);
+            let p = std::fs::canonicalize(cl_path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| cl.path.clone());
+            let p = p.trim_end_matches(['/', '\\']);
+            
             if query_str == p
                 || query_str.starts_with(&format!("{p}/"))
                 || query_str.starts_with(&format!("{p}\\"))
@@ -75,7 +82,12 @@ fn longest_clone_for_path<'a>(
         .as_ref()
         .and_then(|cid| snapshot.clones.iter().find(|c| c.id == *cid))
         .is_some_and(|c| {
-            let cpth = c.path.trim_end_matches(['/', '\\']);
+            let cl_path = Path::new(&c.path);
+            let cpth = std::fs::canonicalize(cl_path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| c.path.clone());
+            let cpth = cpth.trim_end_matches(['/', '\\']);
             query_str == cpth
                 || query_str.starts_with(&format!("{cpth}/"))
                 || query_str.starts_with(&format!("{cpth}\\"))
