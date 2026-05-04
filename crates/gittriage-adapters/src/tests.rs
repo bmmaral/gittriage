@@ -29,3 +29,17 @@ fn test_parse_semgrep_output() {
     assert_eq!(finding.message, "A private key was detected.");
     assert_eq!(finding.details.get("check_id"), Some(&"generic.secrets.security.detected-private-key.detected-private-key".to_string()));
 }
+
+#[test]
+fn test_syft_summary_truncation() {
+    let long_output = "a".repeat(300);
+    let (bin, args) = ("echo", &[long_output.as_str()]);
+    let result = run_capture(bin, args, Path::new(".")).unwrap();
+    let summary = if result.1.len() > 240 {
+        format!("{}…", &result.1[..240])
+    } else {
+        result.1
+    };
+    assert_eq!(summary.len(), 241);
+    assert!(summary.ends_with('…'));
+}
