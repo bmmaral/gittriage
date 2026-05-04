@@ -1,0 +1,22 @@
+[
+  {
+    "Description": "Generic API Key",
+    "StartLine": 8,
+    "EndLine": 8,
+    "StartColumn": 1,
+    "EndColumn": 40,
+    "Match": "key = \"a_fake_but_plausible_api_key_for_testing\"",
+    "Secret": "a_fake_but_plausible_api_key_for_testing",
+    "File": "src/main.rs",
+    "SymlinkFile": "",
+    "Commit": "e8a1f8e8f8d9f5a5c6e7f8d9e0f1f2f3f4f5f6f7",
+    "Entropy": 3.56,
+    "Author": "Goose",
+    "Email": "goose@agentic.ai",
+    "Date": "2026-05-02T18:00:00Z",
+    "Message": "feat: Add new feature",
+    "Tags": [],
+    "RuleID": "generic-api-key",
+    "Fingerprint": "e8a1f8e8f8d9f5a5c6e7f8d9e0f1f2f3f4f5f6f7:src/main.rs:generic-api-key:8"
+  }
+]

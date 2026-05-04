@@ -405,3 +405,6 @@ fn evid(clone_id: &str, kind: &str, delta: f64, detail: String) -> EvidenceItem 
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests;
