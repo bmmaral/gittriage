@@ -1,0 +1,30 @@
+{
+  "results": [
+    {
+      "check_id": "generic.secrets.security.detected-private-key.detected-private-key",
+      "path": "keys/id_rsa",
+      "start": { "line": 1, "col": 1 },
+      "end": { "line": 1, "col": 27 },
+      "extra": {
+        "message": "A private key was detected.",
+        "severity": "ERROR",
+        "lines": "-----BEGIN RSA PRIVATE KEY-----"
+      }
+    }
+  ],
+  "errors": [],
+  "paths": {
+    "_comment": "<add --verbose for a list of paths>",
+    "scanned": 1
+  },
+  "version": "1.20.0",
+  "time": {
+    "rules": {
+      "total_sec": 0.01
+    },
+    "targets": {
+      "total_sec": 0.02
+    },
+    "total_sec": 0.03
+  }
+}
