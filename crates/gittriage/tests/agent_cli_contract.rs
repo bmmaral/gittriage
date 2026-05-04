@@ -201,3 +201,21 @@ fn agent_summary_endpoints_have_expected_shape_after_real_scan() {
         "expected a duplicate group referencing the scanned repos: {summary}"
     );
 }
+
+#[test]
+fn resolve_snapshot_test() {
+    let h = Harness::new();
+
+    let resolve_output = h.run_json(&h.with_config(&[
+        "resolve",
+        h.repo_root.to_str().unwrap(),
+        "--format",
+        "json",
+        "--no-merge-base",
+    ]));
+
+    insta::assert_json_snapshot!(resolve_output, {
+        ".generated_at" => "[generated_at]",
+        ".freshness.last_run_at" => "[last_run_at]",
+    });
+}
