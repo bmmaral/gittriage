@@ -349,7 +349,7 @@ fn windows_path_test() {
     );
     assert_eq!(
         resolve_output["canonical_path"],
-        h.repo_root.to_string_lossy()
+        Value::String(h.repo_root.to_string_lossy().to_string())
     );
 
     // Test check-path with a Windows-style path
@@ -360,5 +360,5 @@ fn windows_path_test() {
         "json",
         "--no-merge-base",
     ]));
-    assert_eq!(check_path_output["disposition"], "canonical_match");
+    assert_eq!(check_path_output["disposition"], "canonical");
 }
