@@ -43,6 +43,7 @@ pub struct AutomationVerdict {
     pub automation_verdict: AutomationVerdictLabel,
     pub blocking_reasons: Vec<String>,
     pub reason_codes: Vec<AutomationVerdictReasonCode>,
+    pub remediation_hints: Vec<String>,
 }
 
 const MIN_CONF_AUTOMATION: f64 = 0.6;
@@ -88,6 +89,7 @@ pub fn automation_verdict_unresolved(message: &str) -> AutomationVerdict {
         automation_verdict: AutomationVerdictLabel::Blocked,
         blocking_reasons: vec![message.to_string()],
         reason_codes: vec![AutomationVerdictReasonCode::UnresolvedTarget],
+        remediation_hints: vec!["Ensure the path is correct and has been scanned.".to_string()],
     }
 }
 
@@ -178,6 +180,8 @@ pub fn automation_verdict_for_cluster(
         AutomationVerdictLabel::Safe
     };
 
+    let remediation_hints = reason_codes.iter().map(remediation_hint_for_code).collect();
+
     AutomationVerdict {
         safe_to_read,
         safe_to_index,
@@ -189,5 +193,19 @@ pub fn automation_verdict_for_cluster(
         automation_verdict,
         blocking_reasons: blocking,
         reason_codes,
+        remediation_hints,
+    }
+}
+
+fn remediation_hint_for_code(code: &AutomationVerdictReasonCode) -> String {
+    match code {
+        AutomationVerdictReasonCode::UnresolvedTarget => "Ensure the path is correct and has been scanned.".into(),
+        AutomationVerdictReasonCode::AmbiguousCanonicalSelection => "Run `gittriage explain` on the cluster to see why a canonical could not be chosen.".into(),
+        AutomationVerdictReasonCode::ManualReviewRequired => "A human needs to review this cluster. Use `gittriage tui`.".into(),
+        AutomationVerdictReasonCode::LowConfidence => "The confidence score is low. More information may be needed, or the cluster may be ambiguous.".into(),
+        AutomationVerdictReasonCode::NestedGitRepoSkipped => "The scan skipped nested git repositories. Consider running a scan on the nested repositories directly.".into(),
+        AutomationVerdictReasonCode::MultipleClonesNoCanonical => "The tool could not determine a canonical clone. You may need to manually specify one.".into(),
+        AutomationVerdictReasonCode::CanonicalDirty => "Commit or stash the changes in the canonical repository.".into(),
+        AutomationVerdictReasonCode::Safe => "No remediation needed.".into(),
     }
 }
