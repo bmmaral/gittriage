@@ -257,9 +257,9 @@ impl Database {
                 (id, repo_id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
                  last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
                  upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
-                 fingerprint, scan_run_id, created_at, updated_at)
+                 fingerprint, has_lockfile, has_ci, has_tests_dir, scan_run_id, created_at, updated_at)
                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                        ?16, ?17, ?18, ?19, ?20, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?21), ?21)
+                        ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?24), ?24)
                 "#,
                 params![
                     clone.id,
@@ -286,6 +286,9 @@ impl Database {
                     clone.readme_title,
                     clone.license_spdx,
                     clone.fingerprint,
+                    clone.has_lockfile as i32,
+                    clone.has_ci as i32,
+                    clone.has_tests_dir as i32,
                     run_id,
                     now
                 ],
@@ -356,7 +359,7 @@ impl Database {
             SELECT id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
                    last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
                    upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
-                   fingerprint
+                   fingerprint, has_lockfile, has_ci, has_tests_dir
             FROM clones
             ORDER BY updated_at DESC
             "#,
@@ -423,9 +426,9 @@ impl Database {
                     readme_title: row.get(16)?,
                     license_spdx: row.get(17)?,
                     fingerprint: row.get(18)?,
-                    has_lockfile: false,
-                    has_ci: false,
-                    has_tests_dir: false,
+                    has_lockfile: row.get::<_, i32>(19)? != 0,
+                    has_ci: row.get::<_, i32>(20)? != 0,
+                    has_tests_dir: row.get::<_, i32>(21)? != 0,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -560,9 +563,9 @@ impl Database {
                 (id, repo_id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
                  last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
                  upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
-                 fingerprint, scan_run_id, created_at, updated_at)
+                 fingerprint, has_lockfile, has_ci, has_tests_dir, scan_run_id, created_at, updated_at)
                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                        ?16, ?17, ?18, ?19, ?20, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?21), ?21)
+                        ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?24), ?24)
                 "#,
                 params![
                     clone.id,
@@ -589,8 +592,11 @@ impl Database {
                     clone.readme_title,
                     clone.license_spdx,
                     clone.fingerprint,
-                    run.id,
-                    now
+                    clone.has_lockfile as i32,
+                    clone.has_ci as i32,
+                    clone.has_tests_dir as i32,
+                    &run.id,
+                    &now
                 ],
             )
             .context("insert clone")?;
