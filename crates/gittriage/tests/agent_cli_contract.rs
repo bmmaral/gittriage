@@ -237,3 +237,18 @@ fn preflight_snapshot_test() {
         ".provenance.freshness.last_run_at" => "[last_run_at]",
     });
 }
+
+#[test]
+fn check_path_snapshot_test() {
+    let h = Harness::new();
+
+    let check_path_output = h.run_json(&h.with_config(&[
+        "check-path",
+        h.repo_root.to_str().unwrap(),
+        "--format",
+        "json",
+        "--no-merge-base",
+    ]));
+
+    insta::assert_json_snapshot!(check_path_output);
+}
