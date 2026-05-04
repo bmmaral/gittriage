@@ -187,6 +187,32 @@ pub fn evaluate_cluster(
             );
         }
 
+        if clone.is_detached_head {
+            bump_canonical(
+                &mut scores,
+                -8.0,
+                &mut evidence,
+                &clone.id,
+                MemberKind::Clone,
+                "detached_head",
+                "clone is in a detached HEAD state",
+            );
+        }
+
+        if let Some(t) = &clone.upstream_tracking {
+            if t.ahead_count > 0 {
+                bump_canonical(
+                    &mut scores,
+                    5.0,
+                    &mut evidence,
+                    &clone.id,
+                    MemberKind::Clone,
+                    "unpushed_commits_present",
+                    "clone is ahead of upstream; local-only work present",
+                );
+            }
+        }
+
         // Repo health (usability)
         if clone.manifest_kind.is_some() {
             bump_usability(
@@ -253,6 +279,66 @@ pub fn evaluate_cluster(
                 &clone.id,
                 "content_fingerprint",
                 "scan fingerprint present",
+            );
+        }
+        
+        if clone.has_lockfile {
+            bump_usability(
+                &mut scores,
+                8.0,
+                &mut evidence,
+                &clone.id,
+                "lockfile_present",
+                "lockfile detected; reliable builds",
+            );
+        } else {
+            bump_usability(
+                &mut scores,
+                -2.0,
+                &mut evidence,
+                &clone.id,
+                "no_lockfile",
+                "no lockfile detected; unreliable builds",
+            );
+        }
+        
+        if clone.has_ci {
+            bump_usability(
+                &mut scores,
+                10.0,
+                &mut evidence,
+                &clone.id,
+                "ci_present",
+                "CI configuration detected",
+            );
+        } else {
+            bump_usability(
+                &mut scores,
+                -4.0,
+                &mut evidence,
+                &clone.id,
+                "no_ci",
+                "no CI configuration detected",
+            );
+        }
+        
+        if clone.has_tests_dir {
+            bump_usability(
+                &mut scores,
+                15.0,
+                &mut evidence,
+                &clone.id,
+                "tests_present",
+                "tests directory detected",
+            );
+        } else {
+            bump_usability(
+                &mut scores,
+                -5.0,
+                &mut evidence,
+                &clone.id,
+                "no_tests",
+                "no tests directory detected",
             );
         }
 
