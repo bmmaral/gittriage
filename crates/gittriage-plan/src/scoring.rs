@@ -211,6 +211,18 @@ pub fn evaluate_cluster(
             );
         }
 
+        if clone.is_sparse_checkout {
+            bump_canonical(
+                &mut scores,
+                -12.0,
+                &mut evidence,
+                &clone.id,
+                MemberKind::Clone,
+                "sparse_checkout",
+                "clone is a sparse checkout; file content is incomplete",
+            );
+        }
+
         if let Some(t) = &clone.upstream_tracking {
             if t.ahead_count > 0 {
                 bump_canonical(
