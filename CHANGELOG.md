@@ -5,10 +5,30 @@
 ### Agent / coding-agent surface
 
 - **`gittriage-agent` crate:** deterministic `resolve`, `verdict`, `preflight`, `check-path`, and `summary --agent` helpers with provenance (`generated_at`, `inventory_run_id`, `scope`, `freshness`, `data_sources`) and explicit **`unsafe_for_automation`** on verdict-shaped output.
+- **Agent verdicts:** verdict-shaped output now includes machine-readable `reason_codes` and `remediation_hints` so coding agents can branch on stable causes instead of parsing prose.
 - **CLI:** `preflight`, `resolve`, `verdict`, `check-path`, and `summary --agent` (shared `--format text|json` and plan flags).
+- **CLI:** agent-command implementation moved into `gittriage-agent`, leaving the binary crate as orchestration glue and reducing CLI/API contract drift.
 - **`gittriage serve`:** `GET /v2/agent/*` routes mirroring the CLI (contract-tested in `gittriage-api`).
+- **`gittriage serve`:** API errors are returned as structured JSON envelopes with stable error codes for agent errors.
 - **TUI:** automation verdict column, canonical path in cluster detail, `v` to cycle all / safe / unsafe / duplicates / local-only views.
 - **Report:** unscoped markdown leads with agent-preflight sections (unsafe, duplicates, canonical paths, dirty canon, nested) before per-cluster detail; per-cluster **`### Scores (summary)`** replaces long score narratives (full axis copy via `explain` / `score`). Scoped `--scope` reports keep the classic score + explanations blocks.
+
+### Scanner and scoring
+
+- **Scan strictness:** `scan` now supports `--fail-on-ingest-error` and `--fail-on-enrich-error` so CI/agent pipelines can fail closed instead of accepting incomplete GitHub or local-git metadata.
+- **Scanner performance:** content fingerprinting and size collection skip `.git`, build artifacts, dependency folders, virtualenvs, and bytecode caches to avoid noisy, expensive fingerprints.
+- **Git state signals:** local metadata now records detached HEAD, shallow clone, sparse checkout, and git worktree state; scoring emits corresponding evidence and canonical penalties.
+- **Branch drift safety:** upstream ahead counts are used to identify unpushed local work. Duplicate-archive actions are replaced with high-priority review actions when an alternate clone has unpushed commits.
+- **Project health signals:** lockfile, CI, and test-directory cues are persisted through SQLite and available in `CloneRecord` for scoring/evidence and future profiles.
+
+### Packaging and distribution
+
+- **npm wrapper:** checksum retrieval or verification failures now fail closed by default instead of executing a downloaded binary under degraded integrity conditions.
+
+### Fixes
+
+- **Agent path checks:** symlinked roots such as macOS `/tmp` ↔ `/private/tmp` are normalized consistently for `resolve` and `check-path`.
+- **Agent summary:** workspace filtering now correctly scopes summary output.
 
 ### CI
 

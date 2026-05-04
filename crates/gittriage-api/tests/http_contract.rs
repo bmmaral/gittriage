@@ -49,6 +49,10 @@ fn test_state_with_inventory() -> (tempfile::TempDir, Arc<AppState>, String) {
         active_branch: Some("main".into()),
         default_branch: Some("main".into()),
         is_dirty: false,
+        is_detached_head: false,
+        is_shallow: false,
+        is_sparse_checkout: false,
+        is_worktree: false,
         last_commit_at: None,
         upstream_tracking: None,
         size_bytes: Some(1),
@@ -69,6 +73,10 @@ fn test_state_with_inventory() -> (tempfile::TempDir, Arc<AppState>, String) {
         active_branch: Some("main".into()),
         default_branch: Some("main".into()),
         is_dirty: false,
+        is_detached_head: false,
+        is_shallow: false,
+        is_sparse_checkout: false,
+        is_worktree: false,
         last_commit_at: None,
         upstream_tracking: None,
         size_bytes: Some(1),
@@ -183,15 +191,11 @@ async fn unknown_route_404() {
 
 #[tokio::test]
 async fn v2_agent_resolve_ok_shape() {
-    let (_dir, state) = test_state();
+    let (_dir, state, repo_root) = test_state_with_inventory();
     let app = router(state);
+    let uri = format!("/v2/agent/resolve?query={repo_root}");
     let res = app
-        .oneshot(
-            Request::builder()
-                .uri("/v2/agent/resolve?query=foo")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .expect("oneshot");
     assert_eq!(res.status(), StatusCode::OK);
@@ -199,7 +203,7 @@ async fn v2_agent_resolve_ok_shape() {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["schema_version"], 1);
     assert_eq!(v["kind"], "gittriage_resolve");
-    assert_eq!(v["query"], "foo");
+    assert_eq!(v["query"], repo_root);
     assert!(v.get("generated_at").is_some());
     assert!(v.get("freshness").is_some());
     assert!(v.get("unsafe_for_automation").is_some());

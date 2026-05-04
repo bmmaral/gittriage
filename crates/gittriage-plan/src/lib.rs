@@ -8,9 +8,9 @@ use gittriage_core::{
     ActionType, CloneRecord, ClusterMember, ClusterPlan, ClusterRecord, ClusterStatus,
     EvidenceItem, InventorySnapshot, MemberKind, PlanAction, PlanDocument, Priority, RemoteRecord,
 };
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
-use sha2::{Sha256, Digest};
 use uuid::Uuid;
 
 /// Optional scoring profile: adjusts hygiene action thresholds only; default `ScoreBundle` axes are unchanged.
@@ -939,8 +939,11 @@ fn build_actions(
         && cluster.scores.canonical >= archive_min
     {
         let any_alternate_has_unpushed = clones.iter().any(|c| {
-            Some(&c.id) != cluster.canonical_clone_id.as_ref() && 
-            c.upstream_tracking.as_ref().map(|u| u.ahead_count > 0).unwrap_or(false)
+            Some(&c.id) != cluster.canonical_clone_id.as_ref()
+                && c.upstream_tracking
+                    .as_ref()
+                    .map(|u| u.ahead_count > 0)
+                    .unwrap_or(false)
         });
 
         if any_alternate_has_unpushed {
@@ -953,7 +956,9 @@ fn build_actions(
                         clone.id.clone(),
                         "Alternate clone has unpushed commits; archiving is unsafe",
                         ActionExtras {
-                            evidence_summary: Some("see `alternate_clone_has_unpushed_work` evidence"),
+                            evidence_summary: Some(
+                                "see `alternate_clone_has_unpushed_work` evidence",
+                            ),
                             confidence: Some(0.80),
                             risk_note: Some("local-only work detected on alternate clone"),
                         },
@@ -970,7 +975,9 @@ fn build_actions(
                         clone.id.clone(),
                         "Lower-priority duplicate clone in same cluster",
                         ActionExtras {
-                            evidence_summary: Some("see `not_canonical_clone` evidence for this clone"),
+                            evidence_summary: Some(
+                                "see `not_canonical_clone` evidence for this clone",
+                            ),
                             confidence: Some(0.65),
                             risk_note: Some(
                                 "confirm no unpushed branches or local-only work before removing",

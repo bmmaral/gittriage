@@ -20,8 +20,8 @@ The system is intentionally split into layers:
 4. **Planning**  
    Produce a deterministic action plan without mutating anything.
 
-5. **Presentation (CLI) and optional hooks**  
-   Markdown/JSON reports from the CLI. **`gittriage serve`** provides a small **experimental** read-only JSON API over SQLite for local scripting; it is secondary to the CLI, not a stable platform surface.
+5. **Presentation (CLI), agent contracts, and optional hooks**  
+   Markdown/JSON reports from the CLI, deterministic agent operations from `gittriage-agent`, and optional adapters. **`gittriage serve`** provides a small **experimental** read-only JSON API over SQLite for local scripting; `/v2/agent/*` mirrors the CLI agent surface but remains local-first rather than a dashboard backend.
 
 ## Workspace crates
 
@@ -38,13 +38,16 @@ SQLite connection and persistence boundary. Uses WAL mode, `busy_timeout`, and s
 Filesystem scanning and project metadata extraction. Supports `git_only` (default) and `project_roots` scan modes, `max_depth`, `.gittriageignore` patterns, and automatic stop-at-`.git` to prevent monorepo sub-package noise. Detects SPDX license identifiers, lockfiles, CI configs, and test directories.
 
 ### `gittriage-git`
-Git metadata collection via system `git` in v1, including upstream tracking metadata (configured upstream branch, ahead/behind counts, and no-upstream state) for drift-aware analysis.
+Git metadata collection via system `git` in v1, including upstream tracking metadata (configured upstream branch, ahead/behind counts, and no-upstream state), detached HEAD, shallow clone, sparse checkout, and linked worktree signals for drift-aware analysis.
 
 ### `gittriage-github`
 Remote repository ingest via `gh` CLI in v1. Supports up to 5000 repos per owner with truncation warnings.
 
 ### `gittriage-plan`
-Clustering, scoring, and action generation.
+Clustering, scoring, and action generation. Archive suggestions are conservative: if an alternate clone has unpushed upstream work, the planner emits review actions instead of duplicate-archive actions.
+
+### `gittriage-agent`
+Central deterministic logic for agent-oriented operations: target resolution, safety verdicts, preflight manifests, wrong-path checks, workspace summaries, structured errors, reason codes, and remediation hints. Both CLI commands and `/v2/agent/*` API routes use this crate to avoid contract drift.
 
 ### `gittriage-report`
 Markdown / JSON rendering.
@@ -59,7 +62,7 @@ Optional CLI integrations (jscpd, semgrep, gitleaks, syft) for plan evidence.
 Optional AI-assisted explanations using OpenAI-compatible endpoints. Consumes structured plan output only (grounding contract); never modifies scores, canonical selections, or actions. Requires `ai.enabled = true` in config and `GITTRIAGE_AI_API_KEY` or `OPENAI_API_KEY`. See `docs/CLI.md` for `gittriage explain --ai` and `gittriage ai-summary`.
 
 ### `gittriage-api`
-Axum HTTP **read-only** API over SQLite (powers **`serve`** only). Binds to `127.0.0.1` by default; loads config once at startup. Experimental and secondary to the CLI; not a dashboard backend.
+Axum HTTP **read-only** API over SQLite (powers **`serve`** only). Binds to `127.0.0.1` by default; loads config once at startup; returns structured JSON error envelopes. Experimental and secondary to the CLI; not a dashboard backend.
 
 ### `gittriage`
 Thin orchestration layer.
@@ -77,7 +80,7 @@ gittriage-plan resolves clusters
    ↓
 scores + evidence (`gittriage score` or inside `gittriage plan`)
    ↓
-plan.json + persisted plan row (`plan`) / report.md (`report`) / interactive browse (`tui`)
+plan.json + persisted plan row (`plan`) / report.md (`report`) / interactive browse (`tui`) / agent preflight JSON (`gittriage-agent` via CLI or `/v2/agent/*`)
 ```
 
 ## Validation loop

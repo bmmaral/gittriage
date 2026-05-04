@@ -56,6 +56,11 @@ A higher score means "this cluster's chosen canonical member is likely the sourc
 | `fresh_commits` | +8 | Last commit within 90 days |
 | `stale_but_tracked` | +4 | Last commit within 12 months |
 | `dirty_worktree` | −4 | Uncommitted changes |
+| `detached_head` | −8 | Clone is in a detached HEAD state |
+| `shallow_clone` | −15 | Clone has incomplete local history |
+| `sparse_checkout` | −12 | Clone only contains a sparse file view |
+| `is_worktree` | −5 | Clone is a linked git worktree rather than the main repository |
+| `unpushed_commits_present` | +5 | Canonical clone is ahead of upstream; local-only work exists |
 | `upstream_remote` | +18 | Canonical remote candidate (push recency) |
 | `remote_default_branch` | +5 | Upstream default branch known |
 | `merge_base` | +8 | Git merge-base shared ancestor found |
@@ -82,13 +87,13 @@ A higher score means "easier to build, reason about, and continue."
 | `no_license` | **−4** | No license file detected |
 | `content_fingerprint` | +4 | Scan fingerprint present |
 
-The scanner also detects **project cues** that feed into evidence and future scoring refinements:
+The scanner also detects and persists **project cues** that feed into evidence and future scoring refinements:
 
 - `has_lockfile` — Cargo.lock, package-lock.json, yarn.lock, poetry.lock, etc.
 - `has_ci` — `.github/workflows`, `.gitlab-ci.yml`, `.circleci`, Jenkinsfile, `.travis.yml`
 - `has_tests_dir` — `tests/`, `test/`, `spec/`, `__tests__/`, `test_suite/`
 
-These are currently scan-time boolean signals available in `CloneRecord`. Adapter-driven signals (secret findings, SBOM, static analysis) come from `--external`.
+These are boolean signals available in `CloneRecord` after scan→SQLite→load round trips. Adapter-driven signals (secret findings, SBOM, static analysis) come from `--external`.
 
 ## Recoverability — `scores.recoverability` (0–100)
 
@@ -168,6 +173,7 @@ The model is intentionally **shallow** so it stays explainable. Treat low scores
 - **Canonical confidence** can be wrong when remotes are missing, forks share names, or clones are grouped by display name only (`name:` buckets). Merge-base evidence helps only when git object databases overlap locally.
 - **Repo health** is scan-heuristic (manifest, README, license metadata)—not a build or test result. **v5 negative evidence** (e.g. `no_manifest`, `no_readme`) now explicitly penalizes missing hygiene signals rather than relying solely on the absence of positive bumps.
 - **Recoverability** assumes recorded git metadata and links match reality; shallow clones and sparse checkouts may look worse than they are.
+- **Unpushed local work** increases canonical confidence only when the canonical clone is ahead of upstream, because it may be the only complete copy. For alternate clones, unpushed work blocks archive suggestions and produces a high-priority review action instead.
 - **Publish readiness** (`oss_readiness`) is not legal or compliance advice; it is a small set of file/metadata signals.
 - **Maintenance risk** aggregates ambiguity and gaps; it will false-positive on intentional offline or experimental trees. **v5 graduated risk** may over-penalize intentional multi-checkout workflows (e.g. separate build/test clones).
 - **User config** (`canonical_pins`, `ignored_cluster_keys`) overrides planner *recommendations* for actions or canonical selection but does not erase underlying scan facts—read evidence alongside overrides.

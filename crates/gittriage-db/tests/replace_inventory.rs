@@ -23,6 +23,10 @@ fn replace_inventory_roundtrip() {
             active_branch: None,
             default_branch: None,
             is_dirty: false,
+            is_detached_head: true,
+            is_shallow: true,
+            is_sparse_checkout: true,
+            is_worktree: true,
             last_commit_at: None,
             upstream_tracking: Some(UpstreamTracking {
                 upstream_branch: Some("origin/main".into()),
@@ -55,6 +59,10 @@ fn replace_inventory_roundtrip() {
     assert_eq!(loaded.clones.len(), 1);
     assert_eq!(loaded.clones[0].id, "c1");
     assert_eq!(loaded.clones[0].path, "/tmp/a");
+    assert!(loaded.clones[0].is_detached_head);
+    assert!(loaded.clones[0].is_shallow);
+    assert!(loaded.clones[0].is_sparse_checkout);
+    assert!(loaded.clones[0].is_worktree);
     let upstream = loaded.clones[0]
         .upstream_tracking
         .as_ref()
@@ -81,6 +89,10 @@ fn replace_inventory_clears_persisted_plan() {
             active_branch: None,
             default_branch: None,
             is_dirty: false,
+            is_detached_head: false,
+            is_shallow: false,
+            is_sparse_checkout: false,
+            is_worktree: false,
             last_commit_at: None,
             upstream_tracking: None,
             size_bytes: None,

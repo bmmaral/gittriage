@@ -67,16 +67,18 @@ fn is_gittriageignored(root: &Path, path: &Path, patterns: &[glob::Pattern]) -> 
     if patterns.is_empty() {
         return false;
     }
-    
+
     // Normalize path relative to root
     let rel_path = path.strip_prefix(root).unwrap_or(path);
     let path_str = rel_path.to_string_lossy().replace('\\', "/");
-    let file_name = rel_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    
-    patterns.iter().any(|p| {
-        p.matches(&path_str)
-            || (!file_name.is_empty() && p.matches(&file_name))
-    })
+    let file_name = rel_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    patterns
+        .iter()
+        .any(|p| p.matches(&path_str) || (!file_name.is_empty() && p.matches(&file_name)))
 }
 
 pub fn scan_roots(roots: &[PathBuf], options: &ScanOptions) -> Result<ScanOutcome> {
@@ -188,6 +190,10 @@ fn build_clone_record(path: &Path, options: &ScanOptions) -> Result<CloneRecord>
         active_branch: None,
         default_branch: None,
         is_dirty: false,
+        is_detached_head: false,
+        is_shallow: false,
+        is_sparse_checkout: false,
+        is_worktree: false,
         last_commit_at: None,
         upstream_tracking: None,
         size_bytes: Some(size_bytes),
@@ -397,19 +403,20 @@ fn compute_fingerprint_and_size(path: &Path, max_files: usize) -> FingerprintRes
     let mut total_size: u64 = 0;
 
     let mut walker = walkdir::WalkDir::new(path).into_iter();
-    
+
     while let Some(Ok(entry)) = walker.next() {
         // Skip common large/irrelevant directories
         if entry.file_type().is_dir() {
             let name = entry.file_name().to_string_lossy();
-            if name == ".git" 
-                || name == "node_modules" 
-                || name == "target" 
-                || name == "build" 
-                || name == "dist" 
-                || name == "__pycache__" 
-                || name == "venv" 
-                || name == ".venv" {
+            if name == ".git"
+                || name == "node_modules"
+                || name == "target"
+                || name == "build"
+                || name == "dist"
+                || name == "__pycache__"
+                || name == "venv"
+                || name == ".venv"
+            {
                 walker.skip_current_dir();
                 continue;
             }

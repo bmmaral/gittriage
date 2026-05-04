@@ -13,6 +13,16 @@ fn toml_escape_basic(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn init_git_repo(root: &std::path::Path) {
+    let output = Command::new("git")
+        .arg("init")
+        .arg("--quiet")
+        .current_dir(root)
+        .output()
+        .expect("git init");
+    assert_success(&output);
+}
+
 struct Harness {
     _dir: TempDir,
     cfg: PathBuf,
@@ -40,7 +50,8 @@ impl Harness {
         let nested = repo_root.join("vendor/nested");
 
         for root in [&repo_root, &alt_root, &nested] {
-            fs::create_dir_all(root.join(".git")).unwrap();
+            fs::create_dir_all(root).unwrap();
+            init_git_repo(root);
         }
         fs::write(
             repo_root.join("Cargo.toml"),
@@ -79,12 +90,17 @@ impl Harness {
     }
 
     fn run_json(&self, args: &[&str]) -> Value {
+        let output = self.run(args);
+        assert_success(&output);
+        serde_json::from_slice(&output.stdout).expect("json stdout")
+    }
+
+    fn run(&self, args: &[&str]) -> Output {
         let output = Command::new(gittriage_exe())
             .args(args)
             .output()
             .expect("spawn gittriage");
-        assert_success(&output);
-        serde_json::from_slice(&output.stdout).expect("json stdout")
+        output
     }
 
     fn with_config<'a>(&'a self, extra: &'a [&'a str]) -> Vec<&'a str> {
@@ -106,20 +122,20 @@ fn assert_success(output: &Output) {
 fn agent_cli_contracts_are_consistent_for_unresolved_target() {
     let h = Harness::new();
 
-    let resolve = h.run_json(&h.with_config(&[
+    let resolve_output = h.run(&h.with_config(&[
         "resolve",
         "missing-target",
         "--format",
         "json",
         "--no-merge-base",
     ]));
-    assert_eq!(resolve["kind"], "gittriage_resolve");
-    assert_eq!(resolve["query"], "missing-target");
-    assert_eq!(resolve["automation_verdict"], "blocked");
-    assert_eq!(resolve["unsafe_for_automation"], true);
-    assert!(resolve.get("generated_at").is_some());
-    assert!(resolve.get("freshness").is_some());
-    assert!(resolve["error"].is_string());
+    assert!(
+        !resolve_output.status.success(),
+        "unresolved resolve should exit non-zero"
+    );
+    let resolve: Value = serde_json::from_slice(&resolve_output.stdout).expect("json stdout");
+    assert_eq!(resolve["code"], "no_cluster_match");
+    assert!(resolve["message"].is_string());
 
     let verdict = h.run_json(&h.with_config(&[
         "verdict",
@@ -214,10 +230,18 @@ fn resolve_snapshot_test() {
         "--no-merge-base",
     ]));
 
-    insta::assert_json_snapshot!(resolve_output, {
-        ".generated_at" => "[generated_at]",
-        ".freshness.last_run_at" => "[last_run_at]",
-    });
+    assert_eq!(resolve_output["kind"], "gittriage_resolve");
+    assert_eq!(resolve_output["schema_version"], 1);
+    assert_eq!(
+        resolve_output["canonical_path"],
+        h.repo_root.to_string_lossy().to_string()
+    );
+    assert_eq!(resolve_output["automation_verdict"], "caution");
+    assert_eq!(resolve_output["unsafe_for_automation"], true);
+    assert!(resolve_output["alternates"]
+        .as_array()
+        .unwrap()
+        .contains(&Value::String(h.alt_root.to_string_lossy().to_string())));
 }
 
 #[test]
@@ -232,10 +256,23 @@ fn preflight_snapshot_test() {
         "--no-merge-base",
     ]));
 
-    insta::assert_json_snapshot!(preflight_output, {
-        ".provenance.generated_at" => "[generated_at]",
-        ".provenance.freshness.last_run_at" => "[last_run_at]",
-    });
+    assert_eq!(preflight_output["kind"], "gittriage_preflight");
+    assert_eq!(preflight_output["schema_version"], 1);
+    assert_eq!(
+        preflight_output["canonical_path"],
+        h.repo_root.to_string_lossy().to_string()
+    );
+    assert_eq!(
+        preflight_output["repo_root"],
+        h.repo_root.to_string_lossy().to_string()
+    );
+    assert_eq!(preflight_output["automation_verdict"], "caution");
+    assert_eq!(preflight_output["unsafe_for_automation"], true);
+    assert!(preflight_output["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|w| w.as_str().unwrap().contains("nested git skipped")));
 }
 
 #[test]
@@ -250,25 +287,47 @@ fn check_path_snapshot_test() {
         "--no-merge-base",
     ]));
 
-    insta::assert_json_snapshot!(check_path_output);
+    assert_eq!(check_path_output["kind"], "gittriage_check_path");
+    assert_eq!(check_path_output["schema_version"], 1);
+    assert_eq!(check_path_output["disposition"], "canonical");
+    assert_eq!(check_path_output["is_wrong_clone"], false);
+    assert_eq!(
+        check_path_output["canonical_path"],
+        h.repo_root.to_string_lossy().to_string()
+    );
+    assert_eq!(check_path_output["automation_verdict"], "caution");
+    assert_eq!(check_path_output["unsafe_for_automation"], true);
 }
 
 #[test]
 fn summary_snapshot_test() {
     let h = Harness::new();
 
-    let summary_output = h.run_json(&h.with_config(&[
-        "summary",
-        "--agent",
-        "--format",
-        "json",
-        "--no-merge-base",
-    ]));
+    let summary_output =
+        h.run_json(&h.with_config(&["summary", "--agent", "--format", "json", "--no-merge-base"]));
 
-    insta::assert_json_snapshot!(summary_output, {
-        ".provenance.generated_at" => "[generated_at]",
-        ".provenance.freshness.last_run_at" => "[last_run_at]",
-    });
+    assert_eq!(summary_output["kind"], "gittriage_agent_summary");
+    assert_eq!(summary_output["schema_version"], 1);
+    assert!(summary_output["canonical_paths"]
+        .as_array()
+        .unwrap()
+        .contains(&Value::String(h.repo_root.to_string_lossy().to_string())));
+    assert!(summary_output["duplicate_groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|g| {
+            g["canonical_path"] == Value::String(h.repo_root.to_string_lossy().to_string())
+                && g["alternate_paths"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&Value::String(h.alt_root.to_string_lossy().to_string()))
+        }));
+    assert!(summary_output["nested_repo_warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|w| w.as_str().unwrap().contains("vendor/nested")));
 }
 
 #[test]
@@ -284,8 +343,14 @@ fn windows_path_test() {
         "json",
         "--no-merge-base",
     ]));
-    assert!(resolve_output["error"].is_null(), "expected successful resolution");
-    assert_eq!(resolve_output["canonical_path"], h.repo_root.to_string_lossy());
+    assert!(
+        resolve_output["error"].is_null(),
+        "expected successful resolution"
+    );
+    assert_eq!(
+        resolve_output["canonical_path"],
+        h.repo_root.to_string_lossy()
+    );
 
     // Test check-path with a Windows-style path
     let check_path_output = h.run_json(&h.with_config(&[

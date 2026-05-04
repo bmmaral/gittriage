@@ -21,6 +21,10 @@ fn clone(id: &str, path: &str) -> CloneRecord {
         active_branch: Some("main".into()),
         default_branch: Some("main".into()),
         is_dirty: false,
+        is_detached_head: false,
+        is_shallow: false,
+        is_sparse_checkout: false,
+        is_worktree: false,
         last_commit_at: Some(Utc::now()),
         upstream_tracking: None,
         size_bytes: Some(1),
@@ -65,6 +69,10 @@ fn clone_record(id: &str, path: &str, is_dirty: bool) -> CloneRecord {
         active_branch: Some("main".into()),
         default_branch: Some("main".into()),
         is_dirty,
+        is_detached_head: false,
+        is_shallow: false,
+        is_sparse_checkout: false,
+        is_worktree: false,
         last_commit_at: Some(Utc::now()),
         upstream_tracking: None,
         size_bytes: Some(123),
@@ -156,7 +164,7 @@ fn resolved_duplicate_fixture() -> (InventorySnapshot, PlanDocument) {
 #[test]
 fn resolve_by_path_returns_canonical_and_alternates() {
     let (snapshot, plan) = resolved_duplicate_fixture();
-    let out = resolve_target(&plan, &snapshot, "/tmp/ws/canon/src/main.rs");
+    let out = resolve_target(&plan, &snapshot, "/tmp/ws/canon/src/main.rs").unwrap();
     assert_eq!(out.kind, "gittriage_resolve");
     assert_eq!(out.schema_version, 1);
     assert_eq!(out.cluster_id.as_deref(), Some("cluster-1"));
@@ -228,9 +236,7 @@ fn unresolved_outputs_fail_closed() {
     };
 
     let resolved = resolve_target(&plan, &snapshot, "missing");
-    assert_eq!(resolved.automation_verdict, AutomationVerdictLabel::Blocked);
-    assert!(resolved.unsafe_for_automation);
-    assert!(resolved.error.is_some());
+    assert!(resolved.is_err());
 
     let pre = preflight(&plan, &snapshot, "missing");
     assert!(pre.verdict.unsafe_for_automation);

@@ -1,7 +1,7 @@
 //! Wrong-repo / non-canonical path detection (F4).
 
 use crate::provenance::Provenance;
-use crate::verdict::automation_verdict_for_cluster;
+use crate::verdict::{automation_verdict_for_cluster, automation_verdict_unresolved};
 use gittriage_core::{InventorySnapshot, MemberKind, PlanDocument};
 use serde::Serialize;
 use std::path::Path;
@@ -56,14 +56,14 @@ fn longest_clone_for_path<'a>(
             let Some(cl) = snapshot.clones.iter().find(|c| c.id == m.id) else {
                 continue;
             };
-            
+
             let cl_path = Path::new(&cl.path);
             let p = std::fs::canonicalize(cl_path)
                 .ok()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| cl.path.clone());
             let p = p.trim_end_matches(['/', '\\']);
-            
+
             if query_str == p
                 || query_str.starts_with(&format!("{p}/"))
                 || query_str.starts_with(&format!("{p}\\"))
@@ -107,19 +107,9 @@ pub fn check_path(
     let Some((cp, matched_clone_path, is_canonical_path)) =
         longest_clone_for_path(plan, snapshot, path)
     else {
-        let v = crate::verdict::AutomationVerdict {
-            safe_to_read: false,
-            safe_to_index: false,
-            safe_to_modify: false,
-            safe_to_commit: false,
-            safe_to_archive: false,
-            human_review_required: true,
-            unsafe_for_automation: true,
-            automation_verdict: crate::verdict::AutomationVerdictLabel::Blocked,
-            blocking_reasons: vec![
-                "Path is not under any inventoried clone — run scan or fix path.".into(),
-            ],
-        };
+        let v = automation_verdict_unresolved(
+            "Path is not under any inventoried clone — run scan or fix path.",
+        );
         return PathCheckOutput {
             schema_version: 1,
             kind: "gittriage_check_path",

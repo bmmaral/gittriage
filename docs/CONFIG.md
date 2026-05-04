@@ -28,6 +28,19 @@ See `gittriage.toml.example` in the repository root. Fields:
 
 The latest `runs` row may include JSON in `stats_json` (e.g. `skipped_nested_git` paths when nested repos were skipped); `gittriage report` surfaces those paths when present.
 
+## Strict scan mode
+
+`scan` continues by default when optional GitHub ingest or local git enrichment fails, while printing the failure to stderr. CI jobs and agent preflight pipelines can opt into fail-closed behavior:
+
+```bash
+gittriage scan ~/Projects --github-owner your-login --fail-on-ingest-error --fail-on-enrich-error
+```
+
+- `--fail-on-ingest-error` fails when GitHub owner ingest fails.
+- `--fail-on-enrich-error` fails when local git metadata enrichment fails for a discovered clone.
+
+These are CLI run-mode flags, not config-file fields, so local interactive scans can stay forgiving while automation can be strict.
+
 ### Scan modes
 
 | Mode | Behavior | Agent / canonical path note |

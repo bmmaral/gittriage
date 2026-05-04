@@ -84,37 +84,53 @@ impl Database {
             Ok(n > 0)
         };
 
-        if !has_column("upstream_branch")? {
-            self.conn
-                .execute("ALTER TABLE clones ADD COLUMN upstream_branch TEXT", [])
-                .context("add clones.upstream_branch")?;
-        }
-        if !has_column("ahead_count")? {
-            self.conn
-                .execute("ALTER TABLE clones ADD COLUMN ahead_count INTEGER", [])
-                .context("add clones.ahead_count")?;
-        }
-        if !has_column("behind_count")? {
-            self.conn
-                .execute("ALTER TABLE clones ADD COLUMN behind_count INTEGER", [])
-                .context("add clones.behind_count")?;
-        }
-        if !has_column("no_upstream_configured")? {
-            self.conn
-                .execute(
-                    "ALTER TABLE clones ADD COLUMN no_upstream_configured INTEGER",
-                    [],
-                )
-                .context("add clones.no_upstream_configured")?;
-        }
-        if !has_column("upstream_resolution_error")? {
-            self.conn
-                .execute(
-                    "ALTER TABLE clones ADD COLUMN upstream_resolution_error TEXT",
-                    [],
-                )
-                .context("add clones.upstream_resolution_error")?;
-        }
+        let add_column_if_missing = |name: &str, sql: &str| -> Result<()> {
+            if has_column(name)? {
+                return Ok(());
+            }
+            match self.conn.execute(sql, []) {
+                Ok(_) => Ok(()),
+                Err(err) if err.to_string().contains("duplicate column name") => Ok(()),
+                Err(err) => Err(err).with_context(|| format!("add clones.{name}")),
+            }
+        };
+
+        add_column_if_missing(
+            "upstream_branch",
+            "ALTER TABLE clones ADD COLUMN upstream_branch TEXT",
+        )?;
+        add_column_if_missing(
+            "ahead_count",
+            "ALTER TABLE clones ADD COLUMN ahead_count INTEGER",
+        )?;
+        add_column_if_missing(
+            "behind_count",
+            "ALTER TABLE clones ADD COLUMN behind_count INTEGER",
+        )?;
+        add_column_if_missing(
+            "no_upstream_configured",
+            "ALTER TABLE clones ADD COLUMN no_upstream_configured INTEGER",
+        )?;
+        add_column_if_missing(
+            "upstream_resolution_error",
+            "ALTER TABLE clones ADD COLUMN upstream_resolution_error TEXT",
+        )?;
+        add_column_if_missing(
+            "is_detached_head",
+            "ALTER TABLE clones ADD COLUMN is_detached_head INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            "is_shallow",
+            "ALTER TABLE clones ADD COLUMN is_shallow INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            "is_sparse_checkout",
+            "ALTER TABLE clones ADD COLUMN is_sparse_checkout INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            "is_worktree",
+            "ALTER TABLE clones ADD COLUMN is_worktree INTEGER NOT NULL DEFAULT 0",
+        )?;
 
         Ok(())
     }
@@ -255,11 +271,13 @@ impl Database {
                 r#"
                 INSERT OR REPLACE INTO clones
                 (id, repo_id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
+                 is_detached_head, is_shallow, is_sparse_checkout, is_worktree,
                  last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
                  upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
                  fingerprint, has_lockfile, has_ci, has_tests_dir, scan_run_id, created_at, updated_at)
                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                        ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?24), ?24)
+                        ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27,
+                        COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?28), ?28)
                 "#,
                 params![
                     clone.id,
@@ -270,6 +288,10 @@ impl Database {
                     clone.active_branch,
                     clone.default_branch,
                     clone.is_dirty as i32,
+                    clone.is_detached_head as i32,
+                    clone.is_shallow as i32,
+                    clone.is_sparse_checkout as i32,
+                    clone.is_worktree as i32,
                     clone.last_commit_at.map(|dt| dt.to_rfc3339()),
                     clone.upstream_tracking.as_ref().and_then(|t| t.upstream_branch.clone()),
                     clone.upstream_tracking.as_ref().map(|t| t.ahead_count as i64),
@@ -357,6 +379,7 @@ impl Database {
         let mut clones_stmt = self.conn.prepare(
             r#"
             SELECT id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
+                   is_detached_head, is_shallow, is_sparse_checkout, is_worktree,
                    last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
                    upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
                    fingerprint, has_lockfile, has_ci, has_tests_dir
@@ -376,16 +399,20 @@ impl Database {
                     active_branch: row.get(5)?,
                     default_branch: row.get(6)?,
                     is_dirty: row.get::<_, i32>(7)? != 0,
+                    is_detached_head: row.get::<_, i32>(8)? != 0,
+                    is_shallow: row.get::<_, i32>(9)? != 0,
+                    is_sparse_checkout: row.get::<_, i32>(10)? != 0,
+                    is_worktree: row.get::<_, i32>(11)? != 0,
                     last_commit_at: row
-                        .get::<_, Option<String>>(8)?
+                        .get::<_, Option<String>>(12)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|dt| dt.with_timezone(&Utc)),
                     upstream_tracking: {
-                        let upstream_branch: Option<String> = row.get(9)?;
-                        let ahead_count: Option<i64> = row.get(10)?;
-                        let behind_count: Option<i64> = row.get(11)?;
-                        let no_upstream_configured: Option<i64> = row.get(12)?;
-                        let upstream_resolution_error: Option<String> = row.get(13)?;
+                        let upstream_branch: Option<String> = row.get(13)?;
+                        let ahead_count: Option<i64> = row.get(14)?;
+                        let behind_count: Option<i64> = row.get(15)?;
+                        let no_upstream_configured: Option<i64> = row.get(16)?;
+                        let upstream_resolution_error: Option<String> = row.get(17)?;
                         match (
                             upstream_branch,
                             ahead_count,
@@ -409,8 +436,8 @@ impl Database {
                             }),
                         }
                     },
-                    size_bytes: row.get::<_, Option<i64>>(14)?.map(|v| v as u64),
-                    manifest_kind: row.get::<_, Option<String>>(15)?.and_then(|s| {
+                    size_bytes: row.get::<_, Option<i64>>(18)?.map(|v| v as u64),
+                    manifest_kind: row.get::<_, Option<String>>(19)?.and_then(|s| {
                         match s.as_str() {
                             "Cargo" => Some(gittriage_core::ManifestKind::Cargo),
                             "PackageJson" => Some(gittriage_core::ManifestKind::PackageJson),
@@ -423,12 +450,12 @@ impl Database {
                             _ => None,
                         }
                     }),
-                    readme_title: row.get(16)?,
-                    license_spdx: row.get(17)?,
-                    fingerprint: row.get(18)?,
-                    has_lockfile: row.get::<_, i32>(19)? != 0,
-                    has_ci: row.get::<_, i32>(20)? != 0,
-                    has_tests_dir: row.get::<_, i32>(21)? != 0,
+                    readme_title: row.get(20)?,
+                    license_spdx: row.get(21)?,
+                    fingerprint: row.get(22)?,
+                    has_lockfile: row.get::<_, i32>(23)? != 0,
+                    has_ci: row.get::<_, i32>(24)? != 0,
+                    has_tests_dir: row.get::<_, i32>(25)? != 0,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -561,11 +588,13 @@ impl Database {
                 r#"
                 INSERT OR REPLACE INTO clones
                 (id, repo_id, path, display_name, is_git, head_oid, active_branch, default_branch, is_dirty,
+                 is_detached_head, is_shallow, is_sparse_checkout, is_worktree,
                  last_commit_at, upstream_branch, ahead_count, behind_count, no_upstream_configured,
                  upstream_resolution_error, size_bytes, manifest_kind, readme_title, license_spdx,
                  fingerprint, has_lockfile, has_ci, has_tests_dir, scan_run_id, created_at, updated_at)
                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-                        ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?24), ?24)
+                        ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27,
+                        COALESCE((SELECT created_at FROM clones WHERE id = ?1), ?28), ?28)
                 "#,
                 params![
                     clone.id,
@@ -576,6 +605,10 @@ impl Database {
                     clone.active_branch,
                     clone.default_branch,
                     clone.is_dirty as i32,
+                    clone.is_detached_head as i32,
+                    clone.is_shallow as i32,
+                    clone.is_sparse_checkout as i32,
+                    clone.is_worktree as i32,
                     clone.last_commit_at.map(|dt| dt.to_rfc3339()),
                     clone.upstream_tracking.as_ref().and_then(|t| t.upstream_branch.clone()),
                     clone.upstream_tracking.as_ref().map(|t| t.ahead_count as i64),

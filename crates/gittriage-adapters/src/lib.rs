@@ -104,6 +104,85 @@ pub struct AdapterResult {
     pub summary: String,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AdapterFinding {
+    tool: ExternalTool,
+    path: String,
+    line: Option<u64>,
+    message: String,
+    details: HashMap<String, String>,
+}
+
+#[cfg(test)]
+fn parse_gitleaks_output(content: &str) -> Result<Vec<AdapterFinding>> {
+    let rows: Vec<serde_json::Value> = serde_json::from_str(content)?;
+    let findings = rows
+        .into_iter()
+        .map(|row| {
+            let mut details = HashMap::new();
+            if let Some(rule_id) = row.get("RuleID").and_then(|v| v.as_str()) {
+                details.insert("rule_id".to_string(), rule_id.to_string());
+            }
+            AdapterFinding {
+                tool: ExternalTool::Gitleaks,
+                path: row
+                    .get("File")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                line: row.get("StartLine").and_then(|v| v.as_u64()),
+                message: row
+                    .get("Description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                details,
+            }
+        })
+        .collect();
+    Ok(findings)
+}
+
+#[cfg(test)]
+fn parse_semgrep_output(content: &str) -> Result<Vec<AdapterFinding>> {
+    let doc: serde_json::Value = serde_json::from_str(content)?;
+    let rows = doc
+        .get("results")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let findings = rows
+        .into_iter()
+        .map(|row| {
+            let mut details = HashMap::new();
+            if let Some(check_id) = row.get("check_id").and_then(|v| v.as_str()) {
+                details.insert("check_id".to_string(), check_id.to_string());
+            }
+            AdapterFinding {
+                tool: ExternalTool::Semgrep,
+                path: row
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                line: row
+                    .get("start")
+                    .and_then(|v| v.get("line"))
+                    .and_then(|v| v.as_u64()),
+                message: row
+                    .get("extra")
+                    .and_then(|v| v.get("message"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                details,
+            }
+        })
+        .collect();
+    Ok(findings)
+}
+
 impl AdapterCache {
     pub fn new() -> Self {
         Self::default()

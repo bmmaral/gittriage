@@ -68,7 +68,7 @@ For a one-off install before the checksum is wired, Chocolatey supports `--ignor
 
 ## npm / npx / bunx (thin binary wrapper)
 
-Package name on **GitHub Packages**: **`@bmmaral/gittriage`** (`packaging/npm/`). The wrapper downloads the GitHub Release binary for the current platform into `~/.cache/gittriage/<version>/`.
+Package name on **GitHub Packages**: **`@bmmaral/gittriage`** (`packaging/npm/`). The wrapper downloads the GitHub Release binary for the current platform into `~/.cache/gittriage/<version>/`, verifies the matching `.sha256` sidecar, and fails closed if the checksum cannot be retrieved or validated.
 
 ### Install from GitHub Packages
 

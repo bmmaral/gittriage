@@ -499,17 +499,17 @@ fn cmd_verdict(
         .ok()
         .and_then(|r| r.cluster_id.as_ref())
         .and_then(|id| plan.clusters.iter().find(|c| c.cluster.id == *id));
+    let cluster_id = resolved.as_ref().ok().and_then(|r| r.cluster_id.clone());
+    let unresolved_message = resolved
+        .as_ref()
+        .err()
+        .map(|e| e.message.as_str())
+        .unwrap_or("Target did not resolve to a cluster.");
 
     let provenance = gittriage_agent::Provenance::from_snapshot(&snap);
     let verdict = cp
         .map(|c| gittriage_agent::automation_verdict_for_cluster(c, &snap))
-        .unwrap_or_else(|| {
-            gittriage_agent::automation_verdict_unresolved(
-                &resolved.err().map(|e| e.message).unwrap_or_else(|| {
-                    "Target did not resolve to a cluster.".to_string()
-                }),
-            )
-        });
+        .unwrap_or_else(|| gittriage_agent::automation_verdict_unresolved(unresolved_message));
     match format {
         AgentOutputFormat::Json => {
             let v = serde_json::json!({
@@ -521,7 +521,7 @@ fn cmd_verdict(
                 "freshness": provenance.freshness,
                 "data_sources": provenance.data_sources,
                 "target": target,
-                "cluster_id": resolved.ok().and_then(|r| r.cluster_id),
+                "cluster_id": cluster_id,
                 "verdict": verdict,
             });
             println!("{}", serde_json::to_string_pretty(&v)?);
@@ -919,9 +919,12 @@ fn cmd_scan(
                             relationship: remote.name,
                         });
                     }
-                },
+                }
                 Err(e) => {
-                    eprintln!("warning: failed to enrich local git clone at {}: {e}", clone.path);
+                    eprintln!(
+                        "warning: failed to enrich local git clone at {}: {e}",
+                        clone.path
+                    );
                     if fail_on_enrich_error {
                         anyhow::bail!("local enrich failed for {}: {e}", clone.path);
                     }
@@ -934,16 +937,14 @@ fn cmd_scan(
     let gh_owner = github_owner.clone().or_else(|| config.github_owner.clone());
     let t_gh = std::time::Instant::now();
     let mut github_remotes: Vec<gittriage_core::RemoteRecord> = match &gh_owner {
-        Some(owner) => {
-            match gittriage_github::ingest_owner(owner) {
-                Ok(remotes) => remotes,
-                Err(e) => {
-                    eprintln!("github ingest error: {e}");
-                    if fail_on_ingest_error {
-                        anyhow::bail!("GitHub ingest failed: {e}");
-                    }
-                    vec![]
+        Some(owner) => match gittriage_github::ingest_owner(owner) {
+            Ok(remotes) => remotes,
+            Err(e) => {
+                eprintln!("github ingest error: {e}");
+                if fail_on_ingest_error {
+                    anyhow::bail!("GitHub ingest failed: {e}");
                 }
+                vec![]
             }
         },
         None => vec![],
@@ -1002,3 +1003,717 @@ fn cmd_scan(
             .iter()
             .map(|p| p.display().to_string())
             .collect(),
+        github_owner: gh_owner.clone(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        stats: if skipped_nested.is_empty() {
+            None
+        } else {
+            Some(gittriage_core::RunScanStats {
+                skipped_nested_git: skipped_nested,
+            })
+        },
+    };
+
+    let t_db = std::time::Instant::now();
+    db.prepare_for_scan_persist()
+        .context("prepare database for scan (clear prior inventory + plan)")?;
+    db.save_run(&run)?;
+    db.save_clones(&run.id, &clones)?;
+    db.save_remotes(&remotes)?;
+    db.replace_clone_remote_links(&links)?;
+    let db_ms = t_db.elapsed().as_millis();
+
+    let n_git = clones.iter().filter(|c| c.is_git).count();
+    let total_size: u64 = clones.iter().filter_map(|c| c.size_bytes).sum();
+
+    println!("scan complete ({:.1}s)", t0.elapsed().as_secs_f64());
+    println!();
+    if matches!(
+        config.scan.scan_mode,
+        gittriage_config::ScanMode::ProjectRoots
+    ) {
+        println!(
+            "  project roots  {:>5}  ({} git checkouts, {} manifest-only)",
+            clones.len(),
+            n_git,
+            clones.len().saturating_sub(n_git)
+        );
+    } else {
+        println!("  git checkouts  {:>5}  (scan_mode git_only)", clones.len());
+    }
+    println!(
+        "  remotes        {:>5}  ({} local-git, {} github)",
+        remotes.len(),
+        remotes.iter().filter(|r| r.provider == "local-git").count(),
+        n_github,
+    );
+    println!("  links          {:>5}", links.len());
+    if total_size > 0 {
+        println!("  total size     {:>5}", format_bytes(total_size));
+    }
+    if !scan_outcome.skipped_nested_git.is_empty() {
+        eprintln!();
+        eprintln!(
+            "  warning: skipped nested git repos under another root (set scan.include_nested_git = true to scan them):"
+        );
+        for p in &scan_outcome.skipped_nested_git {
+            eprintln!("    - {}", p.display());
+        }
+    }
+    println!();
+    println!("  scan     {:>6}ms", scan_ms);
+    println!("  enrich   {:>6}ms", enrich_ms);
+    if gh_owner.is_some() {
+        println!("  github   {:>6}ms", gh_ms);
+    }
+    println!("  persist  {:>6}ms", db_ms);
+    println!();
+    println!("  db: {}", bundle.effective_db_path.display());
+    Ok(())
+}
+
+fn parse_inventory_import(bytes: &[u8]) -> Result<InventorySnapshot> {
+    let v: serde_json::Value = serde_json::from_slice(bytes).context(
+        "parse JSON (expected export envelope with `inventory` or a raw inventory object)",
+    )?;
+    if let Some(inv) = v.get("inventory") {
+        serde_json::from_value(inv.clone()).context("deserialize `inventory` field")
+    } else {
+        serde_json::from_value(v).context("deserialize inventory snapshot")
+    }
+}
+
+fn cmd_export(
+    db: &Database,
+    bundle: &ConfigBundle,
+    with_plan: bool,
+    no_merge_base: bool,
+    external: bool,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    let snapshot = db.load_inventory()?;
+    let plan_json = if with_plan {
+        let opts = plan_build_opts(bundle, !no_merge_base);
+        let mut plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+        if external {
+            gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+        }
+        Some(plan)
+    } else {
+        None
+    };
+
+    let mut doc = serde_json::json!({
+        "schema_version": 1,
+        "kind": "gittriage_inventory_export_v1",
+        "exported_at": Utc::now().to_rfc3339(),
+        "generated_by": format!("gittriage {}", env!("CARGO_PKG_VERSION")),
+        "inventory": snapshot,
+    });
+    if let Some(p) = plan_json {
+        doc["plan"] = serde_json::to_value(&p)?;
+    }
+
+    let json = serde_json::to_string_pretty(&doc)?;
+    match output {
+        Some(path) => {
+            fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?
+        }
+        None => println!("{json}"),
+    }
+    Ok(())
+}
+
+fn cmd_import(db: &mut Database, path: &Path, force: bool) -> Result<()> {
+    anyhow::ensure!(
+        force,
+        "import replaces all inventory and clears the persisted plan; pass `--force` to confirm"
+    );
+    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let mut snapshot = parse_inventory_import(&bytes)?;
+    snapshot.refresh_semantics();
+    db.replace_inventory_snapshot(&snapshot, env!("CARGO_PKG_VERSION"))
+        .context("replace inventory")?;
+    println!(
+        "imported {} clones, {} remotes, {} links",
+        snapshot.clones.len(),
+        snapshot.remotes.len(),
+        snapshot.links.len()
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_explain(
+    db: &Database,
+    bundle: &ConfigBundle,
+    target: explain::ExplainTarget,
+    format: explain::ExplainFormat,
+    no_merge_base: bool,
+    external: bool,
+    ai: bool,
+    profile: Option<String>,
+) -> Result<()> {
+    let snapshot = db.load_inventory()?;
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, !no_merge_base);
+    let mut plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+    }
+    explain::run_explain(&snapshot, &plan, &target, format)?;
+
+    if ai {
+        if !bundle.config.ai.enabled {
+            eprintln!(
+                "Note: skipped AI narrative (ai.enabled is false in config). Deterministic output above is complete."
+            );
+            return Ok(());
+        }
+        if gittriage_ai::resolve_api_key().is_none() {
+            eprintln!(
+                "Note: skipped AI narrative (set GITTRIAGE_AI_API_KEY or OPENAI_API_KEY). Deterministic output above is complete."
+            );
+            return Ok(());
+        }
+        let ai_cfg = gittriage_ai::AiConfig {
+            enabled: bundle.config.ai.enabled,
+            api_base: bundle.config.ai.api_base.clone(),
+            model: bundle.config.ai.model.clone(),
+            max_tokens: bundle.config.ai.max_tokens,
+            temperature: bundle.config.ai.temperature,
+        };
+        let cp = explain::cluster_plan_for_target(&plan, &target)?;
+        let rt = tokio::runtime::Runtime::new()?;
+        let narrative = rt.block_on(gittriage_ai::explain_cluster(&ai_cfg, cp))?;
+        println!("\n-- AI explanation (model-generated, not deterministic) --\n");
+        println!("{narrative}");
+    }
+    Ok(())
+}
+
+fn cmd_ai_summary(
+    db: &Database,
+    bundle: &ConfigBundle,
+    no_merge_base: bool,
+    external: bool,
+) -> Result<()> {
+    if !bundle.config.ai.enabled {
+        eprintln!("Note: skipped AI plan summary (ai.enabled is false in config).");
+        return Ok(());
+    }
+    if gittriage_ai::resolve_api_key().is_none() {
+        eprintln!("Note: skipped AI plan summary (no GITTRIAGE_AI_API_KEY / OPENAI_API_KEY).");
+        return Ok(());
+    }
+
+    let ai_cfg = gittriage_ai::AiConfig {
+        enabled: bundle.config.ai.enabled,
+        api_base: bundle.config.ai.api_base.clone(),
+        model: bundle.config.ai.model.clone(),
+        max_tokens: bundle.config.ai.max_tokens,
+        temperature: bundle.config.ai.temperature,
+    };
+
+    let snapshot = db.load_inventory()?;
+    let opts = plan_build_opts(bundle, !no_merge_base);
+    let mut plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+    }
+
+    let rt = tokio::runtime::Runtime::new()?;
+    let summary = rt.block_on(gittriage_ai::summarize_plan(&ai_cfg, &plan))?;
+    println!("-- AI plan summary (model-generated, not deterministic) --\n");
+    println!("{summary}");
+    Ok(())
+}
+
+fn cmd_ai_doctor(bundle: &ConfigBundle, probe_network: bool) -> Result<()> {
+    println!("AI configuration (gittriage ai-doctor)");
+    println!();
+    println!("  ai.enabled: {}", bundle.config.ai.enabled);
+    println!(
+        "  API key: {}",
+        if gittriage_ai::resolve_api_key().is_some() {
+            "set (GITTRIAGE_AI_API_KEY or OPENAI_API_KEY)"
+        } else {
+            "missing"
+        }
+    );
+    println!("  api_base: {}", bundle.config.ai.api_base);
+    println!("  model: {}", bundle.config.ai.model);
+    println!();
+    if probe_network {
+        if !bundle.config.ai.enabled {
+            println!("  network probe: skipped (ai.enabled is false)");
+        } else {
+            let base = bundle.config.ai.api_base.trim_end_matches('/');
+            let url = format!("{base}/models");
+            println!("  network probe: GET {url}");
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .context("build HTTP client for ai-doctor")?;
+            let mut req = client.get(&url);
+            if let Some(ref k) = gittriage_ai::resolve_api_key() {
+                req = req.bearer_auth(k);
+            }
+            match req.send() {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        println!("  network probe: OK ({status})");
+                    } else {
+                        println!(
+                            "  network probe: reachable but error status {status} (check api_base, model, and auth)"
+                        );
+                    }
+                }
+                Err(e) => println!("  network probe: FAILED ({e:#})"),
+            }
+        }
+    } else {
+        println!(
+            "  (pass `--probe-network` for a short GET to `{}/models`)",
+            bundle.config.ai.api_base.trim_end_matches('/')
+        );
+    }
+    println!();
+    println!("Use `gittriage explain --ai ...` or `gittriage ai-summary` after enabling AI and setting a key.");
+    Ok(())
+}
+
+fn cmd_score(
+    db: &Database,
+    bundle: &ConfigBundle,
+    format: ScoreFormat,
+    no_merge_base: bool,
+    external: bool,
+    profile: Option<String>,
+) -> Result<()> {
+    let t0 = std::time::Instant::now();
+    let snapshot = db.load_inventory()?;
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, !no_merge_base);
+    let mut plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+    }
+    match format {
+        ScoreFormat::Text => {
+            use gittriage_core::ClusterStatus;
+            let n_amb = plan
+                .clusters
+                .iter()
+                .filter(|cp| matches!(cp.cluster.status, ClusterStatus::Ambiguous))
+                .count();
+            let n_actions: usize = plan.clusters.iter().map(|cp| cp.actions.len()).sum();
+            println!(
+                "gittriage score  {} clusters, {} actions, {} ambiguous  (rules v{}, {:.1}s)",
+                plan.clusters.len(),
+                n_actions,
+                n_amb,
+                plan.scoring_rules_version,
+                t0.elapsed().as_secs_f64(),
+            );
+            println!();
+            println!(
+                "{:<26} {:>5} {:>6} {:>5} {:>5} {:>5}  {:>4} {:>4}  STATUS",
+                "LABEL", "CANON", "HEALTH", "RECV", "PUB", "RISK", "EV", "ACT"
+            );
+            println!("{}", "-".repeat(88));
+            for cp in &plan.clusters {
+                let c = &cp.cluster;
+                let st = match c.status {
+                    ClusterStatus::Resolved => "OK",
+                    ClusterStatus::Ambiguous => "AMB",
+                    ClusterStatus::ManualReview => "REV",
+                };
+                let label = if c.label.len() > 25 {
+                    format!("{}...", &c.label[..22])
+                } else {
+                    c.label.clone()
+                };
+                println!(
+                    "{:<26} {:>5.0} {:>6.0} {:>5.0} {:>5.0} {:>5.0}  {:>4} {:>4}  {}",
+                    label,
+                    c.scores.canonical,
+                    c.scores.usability,
+                    c.scores.recoverability,
+                    c.scores.oss_readiness,
+                    c.scores.risk,
+                    c.evidence.len(),
+                    cp.actions.len(),
+                    st,
+                );
+            }
+            if plan.clusters.is_empty() {
+                println!("(no clusters - run `gittriage scan` first)");
+            }
+        }
+        ScoreFormat::Json => {
+            let clusters: Vec<serde_json::Value> = plan
+                .clusters
+                .iter()
+                .map(|cp| serde_json::to_value(&cp.cluster))
+                .collect::<Result<_, _>>()?;
+            let doc = serde_json::json!({
+                "schema_version": 1,
+                "scoring_rules_version": plan.scoring_rules_version,
+                "kind": "gittriage_scores",
+                "generated_at": Utc::now().to_rfc3339(),
+                "generated_by": format!("gittriage {}", env!("CARGO_PKG_VERSION")),
+                "clusters": clusters,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_plan(
+    db: &mut Database,
+    bundle: &ConfigBundle,
+    write: &Path,
+    no_merge_base: bool,
+    external: bool,
+    profile: Option<String>,
+) -> Result<()> {
+    let t0 = std::time::Instant::now();
+    let snapshot = db.load_inventory()?;
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, !no_merge_base);
+    let mut plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+        let probes = gittriage_adapters::probe_all();
+        let on_path = probes.iter().filter(|(_, ok)| *ok).count();
+        let ev_rows = gittriage_adapters::count_adapter_evidence(&plan);
+        println!(
+            "  external   {:>5} / {} tools on PATH; {} adapter evidence rows",
+            on_path,
+            probes.len(),
+            ev_rows
+        );
+    }
+    db.persist_plan(&plan)?;
+    let json = serde_json::to_string_pretty(&plan)?;
+    fs::write(write, json).with_context(|| format!("failed to write plan {}", write.display()))?;
+
+    let n_clusters = plan.clusters.len();
+    let n_actions: usize = plan.clusters.iter().map(|cp| cp.actions.len()).sum();
+    let n_high = plan
+        .clusters
+        .iter()
+        .flat_map(|cp| &cp.actions)
+        .filter(|a| matches!(a.priority, gittriage_core::Priority::High))
+        .count();
+    let n_evidence: usize = plan
+        .clusters
+        .iter()
+        .map(|cp| cp.cluster.evidence.len())
+        .sum();
+
+    println!("plan written ({:.1}s)", t0.elapsed().as_secs_f64());
+    println!();
+    println!(
+        "  clusters  {:>5}   evidence  {:>5}",
+        n_clusters, n_evidence
+    );
+    println!("  actions   {:>5}   high-pri  {:>5}", n_actions, n_high);
+    println!();
+    println!("  json: {}", write.display());
+    println!("  db:   {}", bundle.effective_db_path.display());
+    Ok(())
+}
+
+fn cmd_report(
+    db: &mut Database,
+    bundle: &ConfigBundle,
+    format: ReportFormat,
+    profile: Option<String>,
+    scope: Option<ReportScopeCli>,
+    persist_plan: bool,
+    recompute: bool,
+) -> Result<()> {
+    if recompute {
+        eprintln!(
+            "note: `gittriage report` always recomputes the plan from the current inventory; the markdown header compares timing against any SQLite-persisted snapshot."
+        );
+    }
+    let snapshot: InventorySnapshot = db.load_inventory()?;
+    let mut local_bundle = bundle.clone();
+    if let Some(ref p) = profile {
+        local_bundle.config.planner.scoring_profile = Some(p.clone());
+    }
+    let opts = plan_build_opts(&local_bundle, true);
+    let full_plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    if persist_plan {
+        db.persist_plan(&full_plan)
+            .context("persist plan from `gittriage report --persist-plan`")?;
+    }
+    let (n_persist, persist_at) = db.persisted_plan_cluster_stats()?;
+    let scope_filter = scope.map(Into::into);
+    let display_plan = gittriage_report::filter_plan_by_scope(&full_plan, scope_filter);
+    let (l, m, r, e) = gittriage_report::scope_breakdown(&full_plan);
+    let skipped_nested = snapshot
+        .run
+        .as_ref()
+        .and_then(|run| run.stats.as_ref())
+        .map(|s| s.skipped_nested_git.clone())
+        .unwrap_or_default();
+    match format {
+        ReportFormat::Md => {
+            let agent_headings = scope_filter.is_none();
+            let md = gittriage_report::render_markdown_with(
+                &display_plan,
+                gittriage_report::ReportExtras {
+                    scope_filter,
+                    unfiltered_cluster_count: scope_filter.map(|_| full_plan.clusters.len()),
+                    local_only_count: l,
+                    mixed_count: m,
+                    remote_only_count: r,
+                    empty_count: e,
+                    prefer_local_involved_sections: scope_filter.is_none(),
+                    latest_scan_started_at: snapshot.run.as_ref().map(|r| r.started_at),
+                    sqlite_persisted: Some((n_persist, persist_at)),
+                    skipped_nested_git_paths: skipped_nested,
+                    inventory_snapshot: agent_headings.then(|| snapshot.clone()),
+                    agent_section_plan: agent_headings.then(|| full_plan.clone()),
+                    agent_preflight_headings: agent_headings,
+                },
+            )?;
+            println!("{md}");
+        }
+        ReportFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&display_plan)?);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_tui(
+    db: &Database,
+    bundle: &ConfigBundle,
+    no_merge_base: bool,
+    external: bool,
+    scope: Option<ReportScopeCli>,
+) -> Result<()> {
+    let snapshot = db.load_inventory()?;
+    let opts = plan_build_opts(bundle, !no_merge_base);
+    let mut plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    if external {
+        gittriage_adapters::attach_external_evidence(&mut plan, &snapshot)?;
+    }
+    let config_pins = bundle
+        .config
+        .planner
+        .canonical_pins
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let export_path = bundle.config.tui_export_path.clone().unwrap_or_else(|| {
+        let ts = Utc::now().format("%Y%m%dT%H%M%SZ");
+        PathBuf::from(format!("gittriage-plan-tui-export-{ts}.json"))
+    });
+    let skipped_nested = snapshot
+        .run
+        .as_ref()
+        .and_then(|run| run.stats.as_ref())
+        .map(|s| s.skipped_nested_git.clone())
+        .unwrap_or_default();
+    gittriage_tui::run(
+        plan,
+        snapshot,
+        gittriage_tui::TuiConfig {
+            config_pins,
+            export_path,
+            scope_filter: scope.map(Into::into),
+            skipped_nested_git_paths: skipped_nested,
+        },
+    )
+}
+
+fn cmd_tools(format: ToolsFormat) -> Result<()> {
+    let probes = gittriage_adapters::probe_all();
+    match format {
+        ToolsFormat::Text => {
+            println!("Optional external tools (on PATH):");
+            for (tool, ok) in &probes {
+                println!(
+                    "  {:10} {}",
+                    tool.bin_name(),
+                    if *ok { "yes" } else { "no" }
+                );
+            }
+        }
+        ToolsFormat::Json => {
+            let tools: serde_json::Map<String, serde_json::Value> = probes
+                .into_iter()
+                .map(|(t, ok)| (t.bin_name().to_string(), serde_json::json!(ok)))
+                .collect();
+            let doc = serde_json::json!({
+                "schema_version": 1,
+                "kind": "gittriage_tools",
+                "generated_at": Utc::now().to_rfc3339(),
+                "generated_by": format!("gittriage {}", env!("CARGO_PKG_VERSION")),
+                "tools": tools,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_apply(
+    db: &Database,
+    bundle: &ConfigBundle,
+    dry_run: bool,
+    format: ApplyFormat,
+) -> Result<()> {
+    anyhow::ensure!(
+        dry_run,
+        "v1 is plan-only: use `gittriage apply --dry-run` (mutating apply is disabled)"
+    );
+    let snapshot = db.load_inventory()?;
+    let opts = plan_build_opts(bundle, true);
+    let plan = gittriage_plan::build_plan_with(&snapshot, opts)?;
+    let actions: usize = plan.clusters.iter().map(|cp| cp.actions.len()).sum();
+    let n_clusters = plan.clusters.len();
+    match format {
+        ApplyFormat::Text => {
+            println!(
+                "apply --dry-run: {n_clusters} clusters, {actions} proposed actions (no changes made)",
+            );
+        }
+        ApplyFormat::Json => {
+            let doc = serde_json::json!({
+                "schema_version": 1,
+                "kind": "gittriage_apply_dry_run",
+                "dry_run": true,
+                "cluster_count": n_clusters,
+                "action_count": actions,
+                "scoring_rules_version": plan.scoring_rules_version,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_doctor(bundle: &ConfigBundle, format: DoctorFormat) -> Result<()> {
+    let config = &bundle.config;
+    let config_source = bundle.source_path.as_ref().map(|p| p.display().to_string());
+    let db_open = Database::open(&bundle.effective_db_path);
+    let (db_open_ok, sqlite_version, db_open_error) = match db_open {
+        Ok(db) => (true, db.sqlite_version().ok(), None),
+        Err(e) => (false, None, Some(format!("{e:#}"))),
+    };
+    let gh_ok = which::which("gh").is_ok();
+    let git_ok = which::which("git").is_ok();
+    let cc_ok = matches!(
+        std::process::Command::new("cc").arg("--version").output(),
+        Ok(out) if out.status.success()
+    );
+    let rustc_version = std::process::Command::new("rustc")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    let optional_scanners: serde_json::Map<String, serde_json::Value> =
+        gittriage_adapters::probe_all()
+            .into_iter()
+            .map(|(t, ok)| (t.bin_name().to_string(), serde_json::json!(ok)))
+            .collect();
+
+    match format {
+        DoctorFormat::Json => {
+            let doc = serde_json::json!({
+                "schema_version": 1,
+                "kind": "gittriage_doctor",
+                "generated_at": Utc::now().to_rfc3339(),
+                "generated_by": format!("gittriage {}", env!("CARGO_PKG_VERSION")),
+                "config_source": config_source,
+                "db_path_config": config.db_path.display().to_string(),
+                "db_path_effective": bundle.effective_db_path.display().to_string(),
+                "default_roots": config.default_roots,
+                "database": {
+                    "open_ok": db_open_ok,
+                    "sqlite_version": sqlite_version,
+                    "open_error": db_open_error,
+                },
+                "path_tools": {
+                    "git": git_ok,
+                    "gh": gh_ok,
+                    "cc": cc_ok,
+                },
+                "rustc_version": rustc_version,
+                "optional_scanners_on_path": optional_scanners,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
+        }
+        DoctorFormat::Text => {
+            println!(
+                "config file: {}",
+                config_source
+                    .as_deref()
+                    .unwrap_or("(defaults - no gittriage.toml found)")
+            );
+            println!("db_path (config): {}", config.db_path.display());
+            println!(
+                "db_path (effective): {}",
+                bundle.effective_db_path.display()
+            );
+            println!("db open: {}", if db_open_ok { "ok" } else { "FAILED" });
+            if let Some(e) = db_open_error {
+                println!("  error: {e}");
+            }
+            if let Some(v) = sqlite_version {
+                println!("sqlite: {v}");
+            }
+            println!("default roots: {:?}", config.default_roots);
+            println!("gh in PATH: {gh_ok}");
+            println!("git in PATH: {git_ok}");
+            println!("cc (C linker): {}", if cc_ok { "ok" } else { "missing" });
+            if let Some(v) = rustc_version {
+                println!("rustc: {v}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn expand_tilde(input: &str) -> PathBuf {
+    if let Some(rest) = input.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(input)
+}

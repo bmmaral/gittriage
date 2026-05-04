@@ -22,7 +22,7 @@
 **GitTriage** builds a deterministic picture of your local git workspace: which checkout is **canonical**, which paths are **unsafe for automation**, and how duplicates and nested repos relate — without touching your working trees. Optional `gh` ingest augments local remotes; clustering and scores stay rule-based.
 
 **Before:** agents and humans edit the wrong clone, or guess which folder is “the” repo.
-**After:** `preflight`, `resolve`, `check-path`, and `verdict` give stable JSON (and a read-only HTTP API) you can hand to tooling before any read or write.
+**After:** `preflight`, `resolve`, `check-path`, and `verdict` give stable JSON (and a read-only HTTP API) you can hand to tooling before any read or write. Verdicts include machine-readable reason codes and remediation hints so agents can branch without scraping text.
 
 > **Who it's for:** anyone running coding agents or scripts over messy local trees who needs *which repo is real*, *when automation must stop*, and *what a human should review first*.
 >
@@ -39,6 +39,7 @@ cargo build --release -p gittriage          # → target/release/gittriage
 cp gittriage.toml.example gittriage.toml        # edit db_path / default_roots / github_owner
 
 gittriage scan ~/Projects --github-owner your-login
+gittriage scan ~/Projects --fail-on-ingest-error --fail-on-enrich-error   # CI/agent strict mode
 gittriage preflight my-repo --format json                       # agent manifest (canonical path + verdict + warnings)
 gittriage summary --agent ~/Projects --format json             # compact rollups (duplicates, unsafe, dirty, nested)
 gittriage plan --write plan.json
@@ -87,7 +88,7 @@ cargo build --release -p gittriage
 
 | Command | What it does |
 | :--- | :--- |
-| `scan` | Discover repos into SQLite; default **`git_only`** mode inventories real `.git` roots (best for agents); `project_roots` is broader — see [`docs/CLI.md`](docs/CLI.md#git-workspaces-vs-manifest-only-discovery) |
+| `scan` | Discover repos into SQLite; default **`git_only`** mode inventories real `.git` roots (best for agents); strict flags can fail on ingest/enrichment errors; `project_roots` is broader — see [`docs/CLI.md`](docs/CLI.md#git-workspaces-vs-manifest-only-discovery) |
 | `score` | Compute scores + evidence from inventory (`--profile` to override) |
 | `plan` | Resolve clusters → score → actions → write JSON plan (`--profile`) |
 | `report` | Markdown or JSON from a fresh plan (`--profile`; agent-first sections when unscoped) |
@@ -144,15 +145,15 @@ See [`docs/CLI.md`](docs/CLI.md) for flags, examples, and TUI keybindings.
 | `gittriage-config` | Config loading (`gittriage.toml`) |
 | `gittriage-db` | SQLite persistence (WAL mode, schema versioning) |
 | `gittriage-scan` | Filesystem walking, SPDX sniffing, project cue detection |
-| `gittriage-git` | Git metadata extraction |
+| `gittriage-git` | Git metadata extraction, including upstream drift, detached HEAD, shallow clone, sparse checkout, and worktree signals |
 | `gittriage-github` | `gh` CLI ingest (5000-repo pagination) |
 | `gittriage-plan` | Clustering, scoring engine, action generation |
-| `gittriage-agent` | Resolve, verdict, preflight, path check, agent summary (deterministic) |
+| `gittriage-agent` | Resolve, verdict, preflight, path check, agent summary, structured agent errors, reason codes, and remediation hints (deterministic) |
 | `gittriage-report` | Markdown / JSON report rendering |
 | `gittriage-adapters` | Optional external tool hooks (gitleaks, semgrep, syft, jscpd) |
 | `gittriage-tui` | Ratatui interactive terminal browser |
 | `gittriage-ai` | Optional AI explanations (OpenAI-compatible) |
-| `gittriage-api` | Axum API for `serve` (experimental, loopback default) |
+| `gittriage-api` | Axum API for `serve` (experimental, loopback default, structured JSON errors) |
 | `gittriage` | CLI crate and `gittriage` binary |
 
 ## External tools (optional)
@@ -164,7 +165,7 @@ See [`docs/CLI.md`](docs/CLI.md) for flags, examples, and TUI keybindings.
 | `syft` | **Official** | SBOM / dependency inventory |
 | `jscpd` | Best effort | Copy/paste duplication evidence |
 
-Missing tools are **silently skipped** — they never break the pipeline. See [`docs/EXTERNAL_TOOLS.md`](docs/EXTERNAL_TOOLS.md).
+Missing adapter tools are **silently skipped** — they never break the pipeline. For `scan`, use `--fail-on-ingest-error` and `--fail-on-enrich-error` when incomplete GitHub or local-git metadata should fail CI/agent runs. See [`docs/EXTERNAL_TOOLS.md`](docs/EXTERNAL_TOOLS.md).
 
 ---
 
@@ -174,6 +175,7 @@ Missing tools are **silently skipped** — they never break the pipeline. See [`
 - Scoring and clustering are heuristics — review `plan` and `report` for high-stakes decisions.
 - `serve` is experimental (loopback-only by default). `/v2/agent/*` is the versioned agent contract; field additions are expected; breaking changes will be noted in release notes.
 - GitHub ingest caps at 5000 repos per owner; warns on truncation.
+- The npm wrapper verifies release checksums and fails closed when integrity cannot be established.
 - Core usefulness does **not** depend on AI.
 
 ## Docs

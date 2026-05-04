@@ -62,7 +62,9 @@ fn cluster_for_path<'a>(
             let Some(cl) = snapshot.clones.iter().find(|c| c.id == m.id) else {
                 continue;
             };
-            let p = cl.path.trim_end_matches(['/', '\\']);
+            let cl_path = Path::new(&cl.path);
+            let p = normalize_fs_path(cl_path).unwrap_or_else(|| cl.path.clone());
+            let p = p.trim_end_matches(['/', '\\']);
             if query_str == p
                 || query_str.starts_with(&format!("{p}/"))
                 || query_str.starts_with(&format!("{p}\\"))

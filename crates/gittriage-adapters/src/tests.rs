@@ -12,7 +12,10 @@ fn test_parse_gitleaks_output() {
     assert_eq!(finding.path, "src/main.rs");
     assert_eq!(finding.line, Some(8));
     assert_eq!(finding.message, "Generic API Key");
-    assert_eq!(finding.details.get("rule_id"), Some(&"generic-api-key".to_string()));
+    assert_eq!(
+        finding.details.get("rule_id"),
+        Some(&"generic-api-key".to_string())
+    );
 }
 
 #[test]
@@ -27,7 +30,10 @@ fn test_parse_semgrep_output() {
     assert_eq!(finding.path, "keys/id_rsa");
     assert_eq!(finding.line, Some(1));
     assert_eq!(finding.message, "A private key was detected.");
-    assert_eq!(finding.details.get("check_id"), Some(&"generic.secrets.security.detected-private-key.detected-private-key".to_string()));
+    assert_eq!(
+        finding.details.get("check_id"),
+        Some(&"generic.secrets.security.detected-private-key.detected-private-key".to_string())
+    );
 }
 
 #[test]
@@ -40,6 +46,6 @@ fn test_syft_summary_truncation() {
     } else {
         result.1
     };
-    assert_eq!(summary.len(), 241);
+    assert_eq!(summary.chars().count(), 241);
     assert!(summary.ends_with('…'));
 }

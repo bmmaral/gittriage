@@ -88,9 +88,13 @@ pub struct CloneRecord {
     pub active_branch: Option<String>,
     pub default_branch: Option<String>,
     pub is_dirty: bool,
+    #[serde(default)]
     pub is_detached_head: bool,
+    #[serde(default)]
     pub is_shallow: bool,
+    #[serde(default)]
     pub is_sparse_checkout: bool,
+    #[serde(default)]
     pub is_worktree: bool,
     pub last_commit_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

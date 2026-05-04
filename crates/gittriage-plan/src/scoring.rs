@@ -317,7 +317,7 @@ pub fn evaluate_cluster(
                 "scan fingerprint present",
             );
         }
-        
+
         if clone.has_lockfile {
             bump_usability(
                 &mut scores,
@@ -337,7 +337,7 @@ pub fn evaluate_cluster(
                 "no lockfile detected; unreliable builds",
             );
         }
-        
+
         if clone.has_ci {
             bump_usability(
                 &mut scores,
@@ -357,7 +357,7 @@ pub fn evaluate_cluster(
                 "no CI configuration detected",
             );
         }
-        
+
         if clone.has_tests_dir {
             bump_usability(
                 &mut scores,

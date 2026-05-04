@@ -143,7 +143,10 @@ async fn agent_resolve(
     let bundle = state.bundle.clone();
     let out = tokio::task::spawn_blocking(move || -> Result<_, gittriage_agent::AgentError> {
         let (snap, plan) = load_plan_blocking(path, bundle).map_err(|e| {
-            gittriage_agent::AgentError::new(gittriage_agent::AgentErrorCode::InternalError, e.to_string())
+            gittriage_agent::AgentError::new(
+                gittriage_agent::AgentErrorCode::InternalError,
+                e.to_string(),
+            )
         })?;
         gittriage_agent::resolve_target(&plan, &snap, &q.query)
     })
@@ -167,17 +170,17 @@ async fn agent_verdict(
             .ok()
             .and_then(|r| r.cluster_id.as_ref())
             .and_then(|id| plan.clusters.iter().find(|c| c.cluster.id == *id));
+        let cluster_id = resolved.as_ref().ok().and_then(|r| r.cluster_id.clone());
+        let unresolved_message = resolved
+            .as_ref()
+            .err()
+            .map(|e| e.message.as_str())
+            .unwrap_or("Target did not resolve to a cluster.");
 
         let provenance = gittriage_agent::Provenance::from_snapshot(&snap);
         let verdict = cp
             .map(|c| gittriage_agent::automation_verdict_for_cluster(c, &snap))
-            .unwrap_or_else(|| {
-                gittriage_agent::automation_verdict_unresolved(
-                    &resolved.err().map(|e| e.message).unwrap_or_else(|| {
-                        "Target did not resolve to a cluster.".to_string()
-                    }),
-                )
-            });
+            .unwrap_or_else(|| gittriage_agent::automation_verdict_unresolved(unresolved_message));
         Ok(serde_json::json!({
             "schema_version": 1u32,
             "kind": "gittriage_verdict",
@@ -187,7 +190,7 @@ async fn agent_verdict(
             "freshness": provenance.freshness,
             "data_sources": provenance.data_sources,
             "target": target,
-            "cluster_id": resolved.ok().and_then(|r| r.cluster_id),
+            "cluster_id": cluster_id,
             "verdict": verdict,
         }))
     })
@@ -312,24 +315,29 @@ pub struct ApiError(anyhow::Error);
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         tracing::error!(error = %self.0, "api error");
-        
-        let error_envelope = if let Some(agent_error) = self.0.downcast_ref::<gittriage_agent::AgentError>() {
-            serde_json::json!({
-                "error": {
-                    "message": agent_error.message,
-                    "code": agent_error.code,
-                }
-            })
-        } else {
-            serde_json::json!({
-                "error": {
-                    "message": format!("{}", self.0),
-                    "code": "INTERNAL_ERROR",
-                }
-            })
-        };
-        
-        (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(error_envelope)).into_response()
+
+        let error_envelope =
+            if let Some(agent_error) = self.0.downcast_ref::<gittriage_agent::AgentError>() {
+                serde_json::json!({
+                    "error": {
+                        "message": agent_error.message,
+                        "code": agent_error.code,
+                    }
+                })
+            } else {
+                serde_json::json!({
+                    "error": {
+                        "message": format!("{}", self.0),
+                        "code": "INTERNAL_ERROR",
+                    }
+                })
+            };
+
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(error_envelope),
+        )
+            .into_response()
     }
 }
 

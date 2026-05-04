@@ -2,13 +2,17 @@
 
 ## Positioning
 
-**GitTriage is a local-first, Rust-first CLI for repo fleet triage.**
+**GitTriage is a local-first, Rust-first CLI for repo fleet triage and agent preflight safety.**
 
 It helps developers answer three painful questions fast:
 
 1. Which repos matter right now?
 2. Which copy of a project is the real one?
 3. What should I do next: keep, merge, revive, publish, or archive?
+
+For coding agents, it also answers a fourth question before any automation starts:
+
+4. Is this target safe to read, index, modify, commit, or archive?
 
 GitTriage should not become a web platform, internal developer portal, or always-on analysis service. The product should stay:
 
@@ -28,6 +32,7 @@ Build GitTriage as a **lightweight repo fleet triage tool** with:
 - a strong Rust CLI core
 - a thin optional TUI for inspection and overrides
 - optional external adapters
+- a stable deterministic agent preflight surface (`preflight`, `resolve`, `verdict`, `check-path`, `summary --agent`, and `/v2/agent/*`)
 - optional AI explanation/suggestion features
 - broad binary distribution through multiple package channels
 
@@ -193,6 +198,46 @@ Support:
 - optional local model endpoints later if simple to support
 
 The AI layer should consume structured GitTriage data, not raw repo trees by default.
+
+## Agentic tool leadership strategy
+
+To become one of the leading agentic tools, GitTriage should own a narrow but critical trust boundary: **the preflight truth layer before agents touch a filesystem**. The winning wedge is not “another coding agent,” but the deterministic tool every agent runs first.
+
+### Leadership pillars
+
+1. **Agent contract as product**
+   - Keep `/v2/agent/*` and the matching CLI commands small, stable, versioned, and schema documented.
+   - Prefer explicit fields (`reason_codes`, `remediation_hints`, provenance, freshness, safe-to flags) over prose.
+   - Add a capabilities/schema endpoint so agents can adapt to installed GitTriage versions.
+
+2. **Fail-closed automation defaults**
+   - Automation profiles should treat missing metadata, ambiguous canonical identity, dirty canonicals, unpushed alternates, skipped nested repos, and integrity failures as first-class blockers.
+   - Interactive use can remain forgiving; CI/agent use should have one obvious strict mode preset.
+
+3. **Fast incremental truth**
+   - Add incremental scan and plan-diff commands so long-running agent loops can refresh workspace truth in seconds.
+   - Make output diffable with stable rationale/evidence IDs.
+
+4. **Ecosystem integrations**
+   - Ship small adapters/examples for Cursor, Claude Code, Codex-style CLIs, GitHub Actions, and pre-commit hooks.
+   - Publish a “run this before editing” recipe for agent harness authors.
+
+5. **Benchmarked trust**
+   - Maintain canonical-selection benchmarks and publish accuracy/regression artifacts.
+   - Add fixtures for messy real-world agent hazards: symlinked roots, worktrees, shallow clones, sparse checkouts, detached HEAD, nested repos, and unpushed alternates.
+
+6. **Distribution with integrity**
+   - Keep the Rust binary as the product, but make `brew`, `cargo`, GitHub Releases, and npm/npx/bunx install paths boring and verifiable.
+   - Treat checksum verification and release provenance as part of the agent safety story.
+
+### Near-term roadmap for agent leadership
+
+1. **Agent Safety Profile** — Add a single preset such as `--profile agent_safe` or `--strict-agent` that combines strict scan flags, conservative scoring thresholds, and hard blockers for ambiguous or degraded metadata.
+2. **Capabilities Endpoint** — Add `/v2/agent/capabilities` plus a CLI equivalent that reports schema versions, supported fields, scoring rules version, strict-mode support, and installed adapters.
+3. **Plan Diff / Incremental Scan** — Add `gittriage scan --incremental` and `gittriage plan --diff <OLD>` to support repeated agent loops.
+4. **Stable Evidence IDs** — Make evidence/rationale IDs deterministic so agents can cache decisions and link actions back to exact causes.
+5. **Harness Recipes** — Provide copy-paste integration docs for Cursor/Claude Code/Codex/GitHub Actions: scan, preflight, check-path, stop on unsafe verdict, then proceed.
+6. **Public Trust Report** — Turn the regression dashboard into a published artifact showing canonical benchmark pass rate, contract coverage, and distribution integrity checks.
 
 ## Packaging and distribution
 
@@ -363,12 +408,15 @@ Therefore:
 
 - `export` / `import` (inventory JSON envelope; optional `--with-plan`)
 - deterministic `explain` (text/JSON; optional `--ai` narrative)
+- agent commands: `preflight`, `resolve`, `verdict`, `check-path`, `summary --agent`
 - `tui`: interactive inspection and overrides
 - `ai-summary`: AI-generated plan summary (experimental)
 
 ### Planned
 
 - `suggest`: AI-assisted suggestions grounded in existing evidence
+- `capabilities`: machine-readable agent/schema support
+- incremental scan and plan diff for repeated agent loops
 
 ### Not a priority
 
@@ -386,10 +434,11 @@ The winning position is:
 - more analytical than cleanup utilities
 - more deterministic than AI wrappers
 - more local-first than web-native catalogs
+- safer than direct agent filesystem guessing
 
 This gives GitTriage a clear wedge:
 
-**a trustworthy repo triage tool for developers with too many repos and too little certainty**
+**a trustworthy preflight layer for developers and agents with too many repos and too little certainty**
 
 ## Roadmap
 

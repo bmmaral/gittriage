@@ -36,6 +36,21 @@ Each element of `clusters` is:
 | `evidence` | array | See below |
 | `scores` | object | `canonical`, `usability`, `recoverability` (optional, defaults `0`), `oss_readiness`, `risk` (numbers 0–100) |
 
+### `CloneRecord` fields surfaced through inventory/export contexts
+
+The plan document references clone IDs, while inventory/export payloads carry clone metadata used by scoring and agent verdicts. Recent scoring rules consume these fields when present:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `upstream_tracking` | object or null | Configured upstream branch plus ahead/behind/no-upstream state |
+| `is_detached_head` | boolean | Penalizes canonical confidence because branch intent is unclear |
+| `is_shallow` | boolean | Penalizes canonical confidence because history is incomplete |
+| `is_sparse_checkout` | boolean | Penalizes canonical confidence because file content is incomplete |
+| `is_worktree` | boolean | Penalizes canonical confidence because the checkout is a linked worktree |
+| `has_lockfile` | boolean | Project health / handoff cue persisted from scan |
+| `has_ci` | boolean | Project health / handoff cue persisted from scan |
+| `has_tests_dir` | boolean | Project health / handoff cue persisted from scan |
+
 ### `EvidenceItem`
 
 | Field | Type |

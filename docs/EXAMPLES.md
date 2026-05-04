@@ -11,12 +11,26 @@ You have two folders that both point at `github.com/you/app`.
 3. `gittriage plan --write plan.json` — review **Warnings** and **Actions** in `gittriage report --format md`.
 4. Manually archive or delete the non-canonical tree only after you confirm there is no unpushed work.
 
+If an alternate clone is ahead of its upstream branch, GitTriage suppresses duplicate-archive suggestions and emits a high-priority review action instead. Treat that as local-only work until proven otherwise.
+
+## Agent preflight before editing
+
+Use this pattern before a coding agent reads deeply or writes to a target repo:
+
+```bash
+gittriage scan ~/Projects --fail-on-ingest-error --fail-on-enrich-error
+gittriage preflight ~/Projects/app --format json
+gittriage check-path ~/Projects/app --format json
+```
+
+Stop automation when `unsafe_for_automation` is true or when `reason_codes` contains blockers such as `ambiguous_canonical_selection`, `low_confidence`, `nested_git_repo_skipped`, or `canonical_dirty`. Use `remediation_hints` to decide whether to rescan, inspect in the TUI, commit/stash changes, or choose a different canonical path.
+
 ## Recoverability / repo health (scores)
 
 Health and publish-readiness signals come from scan-time heuristics (manifest, README, license, etc.), not from running your full test suite.
 
 1. Run `scan` then `score --format text`.
-2. Read **Repo health** and **Publish readiness** lines per cluster; cross-check **Evidence** for `manifest_present`, `readme_present`, `license_present`.
+2. Read **Repo health** and **Publish readiness** lines per cluster; cross-check **Evidence** for `manifest_present`, `readme_present`, `license_present`, and git-state evidence such as `detached_head`, `shallow_clone`, `sparse_checkout`, `is_worktree`, or `unpushed_commits_present`.
 3. Use `plan` / `report` for suggested next steps (still descriptive only).
 
 ## Publish readiness (not a full OSS audit)

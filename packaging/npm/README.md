@@ -1,6 +1,6 @@
 # @bmmaral/gittriage (npm / GitHub Packages)
 
-Thin wrapper: on first run it downloads the matching GitHub Release binary for your OS/arch into `~/.cache/gittriage/<version>/` and executes it. This is **not** a JavaScript implementation of GitTriage.
+Thin wrapper: on first run it downloads the matching GitHub Release binary for your OS/arch into `~/.cache/gittriage/<version>/`, verifies the matching `.sha256` sidecar, and executes it. Checksum retrieval or verification failures fail closed by default. This is **not** a JavaScript implementation of GitTriage.
 
 ## Install from GitHub Packages
 

@@ -2,13 +2,13 @@
 
 ## Agent / coding-agent commands
 
-Deterministic **workspace truth** and **automation verdicts** for scripts and coding agents. All share `--format text|json`, `--no-merge-base`, `--external`, and `--profile` (same meaning as `plan` / `score`). JSON responses include **provenance**: `generated_at`, `inventory_run_id`, `scope`, `freshness`, `data_sources` where applicable.
+Deterministic **workspace truth** and **automation verdicts** for scripts and coding agents. All share `--format text|json`, `--no-merge-base`, `--external`, and `--profile` (same meaning as `plan` / `score`). JSON responses include **provenance**: `generated_at`, `inventory_run_id`, `scope`, `freshness`, `data_sources` where applicable. Verdict-shaped output also includes `reason_codes` and `remediation_hints` for stable agent branching.
 
 | Command | Purpose |
 | --- | --- |
 | `preflight <TARGET>` | Compact manifest: `canonical_path`, `repo_root`, alternates as `blocked_paths` / `ignored_alternates`, `warnings`, flattened `AutomationVerdict` (`safe_to_*`, `unsafe_for_automation`, `blocking_reasons`), `recommended_next_action` |
 | `resolve <QUERY>` | Resolve label, filesystem path, or remote URL → `canonical_path`, `cluster_id`, `alternates`, `confidence`, `automation_verdict`, `why_canonical`, `unsafe_for_automation` |
-| `verdict <TARGET>` | Full `AutomationVerdict` for the resolved cluster (conservative block if the target does not resolve) |
+| `verdict <TARGET>` | Full `AutomationVerdict` for the resolved cluster (conservative block if the target does not resolve); includes `reason_codes` such as `low_confidence`, `canonical_dirty`, and `nested_git_repo_skipped` |
 | `check-path <PATH>` | Wrong-clone check: disposition vs canonical, guidance for non-canonical paths |
 | `summary --agent [DIR]…` | Token-light rollup: duplicate groups, unsafe targets, canonical paths, dirty canonical checkouts, nested warnings, counts (`--agent` required) |
 
@@ -82,11 +82,15 @@ The **`[planner]`** table drives planning: ambiguity cutoff (`ambiguous_cluster_
 
 Discover local repositories and persist scan output.
 
+- `--fail-on-ingest-error` — when `--github-owner` or `github_owner` is active, fail with a non-zero exit code if GitHub ingest fails. Without this flag, the error is printed and the scan continues with local data.
+- `--fail-on-enrich-error` — fail with a non-zero exit code when local git metadata enrichment fails for any discovered clone. Without this flag, the failing clone is warned about and the scan continues.
+
 Example:
 
 ```bash
 gittriage scan ~/Projects ~/code --github-owner your-github-login
 gittriage scan ~/Projects --github-owner your-github-login --github-owner-mode full_catalog
+gittriage scan ~/Projects --github-owner your-github-login --fail-on-ingest-error --fail-on-enrich-error
 ```
 
 Nested `.git` directories under another root are skipped by default; stderr lists them. Set `scan.include_nested_git = true` (or use a future release’s warnings-only mode) to include them.
@@ -181,6 +185,19 @@ Read-only HTTP JSON API (requires a configured/openable SQLite DB). Intended for
 
 - `--port <PORT>` — listen port (default: 3030).
 - `--listen <IP>` — bind address (default: `127.0.0.1`; use `0.0.0.0` for network access).
+
+API failures are returned as JSON envelopes:
+
+```json
+{
+  "error": {
+    "code": "no_cluster_match",
+    "message": "no cluster matches query"
+  }
+}
+```
+
+Internal errors use `code: "INTERNAL_ERROR"` and are also logged server-side.
 Routes (all `GET`, JSON bodies):
 
 - `/health` — `{"ok": true, "service": "gittriage-api", "version": "<crate semver>"}` (service liveness).
