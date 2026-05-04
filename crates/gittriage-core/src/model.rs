@@ -91,6 +91,7 @@ pub struct CloneRecord {
     pub is_detached_head: bool,
     pub is_shallow: bool,
     pub is_sparse_checkout: bool,
+    pub is_worktree: bool,
     pub last_commit_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_tracking: Option<UpstreamTracking>,

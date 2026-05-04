@@ -223,6 +223,18 @@ pub fn evaluate_cluster(
             );
         }
 
+        if clone.is_worktree {
+            bump_canonical(
+                &mut scores,
+                -5.0,
+                &mut evidence,
+                &clone.id,
+                MemberKind::Clone,
+                "is_worktree",
+                "clone is a git worktree, not the main repository",
+            );
+        }
+
         if let Some(t) = &clone.upstream_tracking {
             if t.ahead_count > 0 {
                 bump_canonical(
