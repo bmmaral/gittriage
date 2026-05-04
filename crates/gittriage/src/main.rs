@@ -112,6 +112,12 @@ enum Commands {
         /// Override `github_owner_mode` for this run (`augment` = only repos matching local remotes).
         #[arg(long, value_enum)]
         github_owner_mode: Option<GitHubOwnerModeCli>,
+        /// Fail with a non-zero exit code if GitHub ingestion fails.
+        #[arg(long)]
+        fail_on_ingest_error: bool,
+        /// Fail with a non-zero exit code if local git enrichment fails.
+        #[arg(long)]
+        fail_on_enrich_error: bool,
     },
     /// Compute cluster scores and evidence from the current inventory.
     Score {
@@ -732,7 +738,17 @@ fn main() -> Result<()> {
             roots,
             github_owner,
             github_owner_mode,
-        } => cmd_scan(&mut db, &bundle, roots, github_owner, github_owner_mode),
+            fail_on_ingest_error,
+            fail_on_enrich_error,
+        } => cmd_scan(
+            &mut db,
+            &bundle,
+            roots,
+            github_owner,
+            github_owner_mode,
+            fail_on_ingest_error,
+            fail_on_enrich_error,
+        ),
         Commands::Score {
             format,
             no_merge_base,
@@ -828,6 +844,8 @@ fn cmd_scan(
     roots: Vec<PathBuf>,
     github_owner: Option<String>,
     github_owner_mode_cli: Option<GitHubOwnerModeCli>,
+    fail_on_ingest_error: bool,
+    fail_on_enrich_error: bool,
 ) -> Result<()> {
     let t0 = std::time::Instant::now();
     let config = &bundle.config;
@@ -873,28 +891,36 @@ fn cmd_scan(
     for clone in &mut clones {
         let path = PathBuf::from(&clone.path);
         if path.join(".git").exists() {
-            if let Ok(git_remotes) = gittriage_git::enrich_clone(&path, clone) {
-                for remote in git_remotes {
-                    let rid = format!("remote-local-{}", uuid::Uuid::new_v4());
-                    remotes.push(gittriage_core::RemoteRecord {
-                        id: rid.clone(),
-                        provider: "local-git".into(),
-                        owner: None,
-                        name: Some(remote.name.clone()),
-                        full_name: None,
-                        url: remote.url,
-                        normalized_url: remote.normalized_url,
-                        default_branch: clone.default_branch.clone(),
-                        is_fork: false,
-                        is_archived: false,
-                        is_private: false,
-                        pushed_at: clone.last_commit_at,
-                    });
-                    links.push(CloneRemoteLink {
-                        clone_id: clone.id.clone(),
-                        remote_id: rid,
-                        relationship: remote.name,
-                    });
+            match gittriage_git::enrich_clone(&path, clone) {
+                Ok(git_remotes) => {
+                    for remote in git_remotes {
+                        let rid = format!("remote-local-{}", uuid::Uuid::new_v4());
+                        remotes.push(gittriage_core::RemoteRecord {
+                            id: rid.clone(),
+                            provider: "local-git".into(),
+                            owner: None,
+                            name: Some(remote.name.clone()),
+                            full_name: None,
+                            url: remote.url,
+                            normalized_url: remote.normalized_url,
+                            default_branch: clone.default_branch.clone(),
+                            is_fork: false,
+                            is_archived: false,
+                            is_private: false,
+                            pushed_at: clone.last_commit_at,
+                        });
+                        links.push(CloneRemoteLink {
+                            clone_id: clone.id.clone(),
+                            remote_id: rid,
+                            relationship: remote.name,
+                        });
+                    }
+                },
+                Err(e) => {
+                    eprintln!("warning: failed to enrich local git clone at {}: {e}", clone.path);
+                    if fail_on_enrich_error {
+                        anyhow::bail!("local enrich failed for {}: {e}", clone.path);
+                    }
                 }
             }
         }
@@ -904,7 +930,18 @@ fn cmd_scan(
     let gh_owner = github_owner.clone().or_else(|| config.github_owner.clone());
     let t_gh = std::time::Instant::now();
     let mut github_remotes: Vec<gittriage_core::RemoteRecord> = match &gh_owner {
-        Some(owner) => gittriage_github::ingest_owner(owner).unwrap_or_default(),
+        Some(owner) => {
+            match gittriage_github::ingest_owner(owner) {
+                Ok(remotes) => remotes,
+                Err(e) => {
+                    eprintln!("github ingest error: {e}");
+                    if fail_on_ingest_error {
+                        anyhow::bail!("GitHub ingest failed: {e}");
+                    }
+                    vec![]
+                }
+            }
+        },
         None => vec![],
     };
 
