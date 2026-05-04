@@ -1,5 +1,12 @@
-//! Deterministic **agent preflight** layer: canonical resolution, automation verdicts,
-//! path checks, and compact JSON for coding agents (see product doc `GITTRIAGE_AGENTIC_POSITIONING_TODO.md`).
+//! # GitTriage Agent Logic Core
+//!
+//! This crate contains the central, deterministic logic for all agent-facing commands
+//! (`resolve`, `verdict`, `preflight`, `check-path`, etc.). Both the CLI and the API
+//! server are thin wrappers around the functions in this crate. This ensures a
+//! consistent data contract and identical behavior across all entry points.
+//!
+//! To maintain this consistency, any new agent-facing logic or data structures
+//! should be added here, not in the CLI or API crates directly.
 
 mod path_check;
 mod preflight;
