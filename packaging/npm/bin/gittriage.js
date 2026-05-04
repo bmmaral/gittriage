@@ -95,7 +95,10 @@ async function ensureBinary() {
       fs.unlinkSync(target);
       throw new Error(`SHA256 mismatch for ${remoteName}`);
     }
-  } catch (_e) {
+  } catch (e) {
+    if (e.message && e.message.includes("SHA256 mismatch")) {
+      throw e;
+    }
     /* Older releases may lack .sha256 sidecars; binary still usable. */
   }
 
