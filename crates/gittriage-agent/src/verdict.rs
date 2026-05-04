@@ -17,6 +17,19 @@ pub enum AutomationVerdictLabel {
     Blocked,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationVerdictReasonCode {
+    UnresolvedTarget,
+    AmbiguousCanonicalSelection,
+    ManualReviewRequired,
+    LowConfidence,
+    NestedGitRepoSkipped,
+    MultipleClonesNoCanonical,
+    CanonicalDirty,
+    Safe,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AutomationVerdict {
     pub safe_to_read: bool,
@@ -29,6 +42,7 @@ pub struct AutomationVerdict {
     pub unsafe_for_automation: bool,
     pub automation_verdict: AutomationVerdictLabel,
     pub blocking_reasons: Vec<String>,
+    pub reason_codes: Vec<AutomationVerdictReasonCode>,
 }
 
 const MIN_CONF_AUTOMATION: f64 = 0.6;
@@ -73,6 +87,7 @@ pub fn automation_verdict_unresolved(message: &str) -> AutomationVerdict {
         unsafe_for_automation: true,
         automation_verdict: AutomationVerdictLabel::Blocked,
         blocking_reasons: vec![message.to_string()],
+        reason_codes: vec![AutomationVerdictReasonCode::UnresolvedTarget],
     }
 }
 
@@ -82,6 +97,7 @@ pub fn automation_verdict_for_cluster(
 ) -> AutomationVerdict {
     let c = &cp.cluster;
     let mut blocking: Vec<String> = Vec::new();
+    let mut reason_codes: Vec<AutomationVerdictReasonCode> = Vec::new();
 
     let human_review_required = matches!(
         c.status,
@@ -91,15 +107,18 @@ pub fn automation_verdict_for_cluster(
     if matches!(c.status, ClusterStatus::Ambiguous) {
         blocking
             .push("Ambiguous canonical selection — do not assume a single source of truth.".into());
+        reason_codes.push(AutomationVerdictReasonCode::AmbiguousCanonicalSelection);
     }
     if matches!(c.status, ClusterStatus::ManualReview) {
         blocking.push("Cluster status is ManualReview — human verification required.".into());
+        reason_codes.push(AutomationVerdictReasonCode::ManualReviewRequired);
     }
     if c.confidence < MIN_CONF_AUTOMATION {
         blocking.push(format!(
             "Confidence {:.2} is below the automation threshold ({:.2}).",
             c.confidence, MIN_CONF_AUTOMATION
         ));
+        reason_codes.push(AutomationVerdictReasonCode::LowConfidence);
     }
 
     if has_nested_skipped_evidence(cp) {
@@ -107,11 +126,13 @@ pub fn automation_verdict_for_cluster(
             "Nested git repositories were skipped under this tree — paths may be incomplete."
                 .into(),
         );
+        reason_codes.push(AutomationVerdictReasonCode::NestedGitRepoSkipped);
     }
 
     let n_clones = clone_member_count(cp);
     if n_clones > 1 && c.canonical_clone_id.is_none() {
         blocking.push("Multiple local checkouts without a recorded canonical clone id.".into());
+        reason_codes.push(AutomationVerdictReasonCode::MultipleClonesNoCanonical);
     }
 
     let dirty = canonical_clone_dirty(cp, snapshot);
@@ -120,6 +141,11 @@ pub fn automation_verdict_for_cluster(
             "Canonical checkout has a dirty worktree — avoid automated commits until reviewed."
                 .into(),
         );
+        reason_codes.push(AutomationVerdictReasonCode::CanonicalDirty);
+    }
+
+    if blocking.is_empty() {
+        reason_codes.push(AutomationVerdictReasonCode::Safe);
     }
 
     let safe_to_read = !c.members.is_empty();
@@ -162,5 +188,6 @@ pub fn automation_verdict_for_cluster(
         unsafe_for_automation,
         automation_verdict,
         blocking_reasons: blocking,
+        reason_codes,
     }
 }
