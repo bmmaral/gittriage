@@ -270,3 +270,30 @@ fn summary_snapshot_test() {
         ".provenance.freshness.last_run_at" => "[last_run_at]",
     });
 }
+
+#[test]
+#[cfg(windows)]
+fn windows_path_test() {
+    let h = Harness::new();
+
+    // Test resolve with a Windows-style path
+    let resolve_output = h.run_json(&h.with_config(&[
+        "resolve",
+        &h.repo_root.to_string_lossy().replace('/', "\\"),
+        "--format",
+        "json",
+        "--no-merge-base",
+    ]));
+    assert!(resolve_output["error"].is_null(), "expected successful resolution");
+    assert_eq!(resolve_output["canonical_path"], h.repo_root.to_string_lossy());
+
+    // Test check-path with a Windows-style path
+    let check_path_output = h.run_json(&h.with_config(&[
+        "check-path",
+        &h.repo_root.to_string_lossy().replace('/', "\\"),
+        "--format",
+        "json",
+        "--no-merge-base",
+    ]));
+    assert_eq!(check_path_output["disposition"], "canonical_match");
+}
