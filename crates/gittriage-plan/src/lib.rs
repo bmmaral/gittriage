@@ -10,6 +10,7 @@ use gittriage_core::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
+use sha2::{Sha256, Digest};
 use uuid::Uuid;
 
 /// Optional scoring profile: adjusts hygiene action thresholds only; default `ScoreBundle` axes are unchanged.
@@ -267,8 +268,22 @@ pub fn resolve_clusters(snapshot: &InventorySnapshot, opts: &PlanBuildOpts) -> V
             }
         }
 
+        let mut hasher = Sha256::new();
+        hasher.update(cluster_key.as_bytes());
+        for c in &cluster_clones {
+            hasher.update(c.path.as_bytes());
+        }
+        for r in &cluster_remotes {
+            if let Some(n) = &r.name {
+                hasher.update(n.as_bytes());
+            }
+            hasher.update(r.url.as_bytes());
+        }
+        let hash_result = hasher.finalize();
+        let cluster_id = format!("cluster-{:x}", hash_result);
+
         let mut cluster = ClusterRecord {
-            id: format!("cluster-{}", Uuid::new_v4()),
+            id: cluster_id,
             cluster_key,
             label,
             status: eval.status,
@@ -923,22 +938,46 @@ fn build_actions(
         && clones.len() > 1
         && cluster.scores.canonical >= archive_min
     {
-        for clone in clones {
-            if Some(&clone.id) != cluster.canonical_clone_id.as_ref() {
-                actions.push(plan_action(
-                    Priority::High,
-                    ActionType::ArchiveLocalDuplicate,
-                    MemberKind::Clone,
-                    clone.id.clone(),
-                    "Lower-priority duplicate clone in same cluster",
-                    ActionExtras {
-                        evidence_summary: Some("see `not_canonical_clone` evidence for this clone"),
-                        confidence: Some(0.65),
-                        risk_note: Some(
-                            "confirm no unpushed branches or local-only work before removing",
-                        ),
-                    },
-                ));
+        let any_alternate_has_unpushed = clones.iter().any(|c| {
+            Some(&c.id) != cluster.canonical_clone_id.as_ref() && 
+            c.upstream_tracking.as_ref().map(|u| u.ahead_count > 0).unwrap_or(false)
+        });
+
+        if any_alternate_has_unpushed {
+            for clone in clones {
+                if Some(&clone.id) != cluster.canonical_clone_id.as_ref() {
+                    actions.push(plan_action(
+                        Priority::High,
+                        ActionType::ReviewAmbiguousCluster,
+                        MemberKind::Clone,
+                        clone.id.clone(),
+                        "Alternate clone has unpushed commits; archiving is unsafe",
+                        ActionExtras {
+                            evidence_summary: Some("see `alternate_clone_has_unpushed_work` evidence"),
+                            confidence: Some(0.80),
+                            risk_note: Some("local-only work detected on alternate clone"),
+                        },
+                    ));
+                }
+            }
+        } else {
+            for clone in clones {
+                if Some(&clone.id) != cluster.canonical_clone_id.as_ref() {
+                    actions.push(plan_action(
+                        Priority::High,
+                        ActionType::ArchiveLocalDuplicate,
+                        MemberKind::Clone,
+                        clone.id.clone(),
+                        "Lower-priority duplicate clone in same cluster",
+                        ActionExtras {
+                            evidence_summary: Some("see `not_canonical_clone` evidence for this clone"),
+                            confidence: Some(0.65),
+                            risk_note: Some(
+                                "confirm no unpushed branches or local-only work before removing",
+                            ),
+                        },
+                    ));
+                }
             }
         }
     }
