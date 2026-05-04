@@ -8,6 +8,7 @@
 //! To maintain this consistency, any new agent-facing logic or data structures
 //! should be added here, not in the CLI or API crates directly.
 
+pub mod error;
 mod path_check;
 mod preflight;
 mod provenance;
@@ -15,6 +16,7 @@ mod resolve;
 mod summary;
 mod verdict;
 
+pub use error::{AgentError, AgentErrorCode};
 pub use path_check::{check_path, PathCheckOutput, PathDisposition};
 pub use preflight::{preflight, PreflightOutput};
 pub use provenance::{Freshness, Provenance};

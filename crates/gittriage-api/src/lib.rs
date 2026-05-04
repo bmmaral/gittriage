@@ -138,17 +138,18 @@ pub struct AgentSummaryParams {
 async fn agent_resolve(
     State(state): State<Arc<AppState>>,
     Query(q): Query<AgentQueryParam>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<gittriage_agent::ResolveOutput>, ApiError> {
     let path = state.db_path.clone();
     let bundle = state.bundle.clone();
-    let value = tokio::task::spawn_blocking(move || -> anyhow::Result<serde_json::Value> {
-        let (snap, plan) = load_plan_blocking(path, bundle)?;
-        let out = gittriage_agent::resolve_target(&plan, &snap, &q.query);
-        Ok(serde_json::to_value(&out)?)
+    let out = tokio::task::spawn_blocking(move || -> Result<_, gittriage_agent::AgentError> {
+        let (snap, plan) = load_plan_blocking(path, bundle).map_err(|e| {
+            gittriage_agent::AgentError::new(gittriage_agent::AgentErrorCode::InternalError, e.to_string())
+        })?;
+        gittriage_agent::resolve_target(&plan, &snap, &q.query)
     })
     .await
     .context("join")??;
-    Ok(Json(value))
+    Ok(Json(out))
 }
 
 async fn agent_verdict(
@@ -162,18 +163,19 @@ async fn agent_verdict(
         let (snap, plan) = load_plan_blocking(path, bundle)?;
         let resolved = gittriage_agent::resolve_target(&plan, &snap, &target);
         let cp = resolved
-            .cluster_id
             .as_ref()
+            .ok()
+            .and_then(|r| r.cluster_id.as_ref())
             .and_then(|id| plan.clusters.iter().find(|c| c.cluster.id == *id));
+
         let provenance = gittriage_agent::Provenance::from_snapshot(&snap);
         let verdict = cp
             .map(|c| gittriage_agent::automation_verdict_for_cluster(c, &snap))
             .unwrap_or_else(|| {
                 gittriage_agent::automation_verdict_unresolved(
-                    resolved
-                        .error
-                        .as_deref()
-                        .unwrap_or("Target did not resolve to a cluster."),
+                    &resolved.err().map(|e| e.message).unwrap_or_else(|| {
+                        "Target did not resolve to a cluster.".to_string()
+                    }),
                 )
             });
         Ok(serde_json::json!({
@@ -185,7 +187,7 @@ async fn agent_verdict(
             "freshness": provenance.freshness,
             "data_sources": provenance.data_sources,
             "target": target,
-            "cluster_id": resolved.cluster_id,
+            "cluster_id": resolved.ok().and_then(|r| r.cluster_id),
             "verdict": verdict,
         }))
     })
@@ -311,12 +313,21 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         tracing::error!(error = %self.0, "api error");
         
-        let error_envelope = serde_json::json!({
-            "error": {
-                "message": format!("{}", self.0),
-                "code": "INTERNAL_ERROR",
-            }
-        });
+        let error_envelope = if let Some(agent_error) = self.0.downcast_ref::<gittriage_agent::AgentError>() {
+            serde_json::json!({
+                "error": {
+                    "message": agent_error.message,
+                    "code": agent_error.code,
+                }
+            })
+        } else {
+            serde_json::json!({
+                "error": {
+                    "message": format!("{}", self.0),
+                    "code": "INTERNAL_ERROR",
+                }
+            })
+        };
         
         (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(error_envelope)).into_response()
     }

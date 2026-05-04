@@ -13,6 +13,7 @@ uuid.workspace = true
 
 gittriage-core = { path = "../gittriage-core" }
 gittriage-git = { path = "../gittriage-git" }
+sha2.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

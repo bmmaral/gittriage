@@ -1,14 +1,13 @@
 //! Canonical repo resolution (F1).
 
+use crate::error::{AgentError, AgentErrorCode};
+use crate::provenance::Provenance;
 use crate::verdict::{automation_verdict_for_cluster, AutomationVerdictLabel};
-use anyhow::{bail, Result};
 use gittriage_core::{
     normalize_remote_url, ClusterPlan, InventorySnapshot, MemberKind, PlanDocument,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-
-use crate::provenance::Provenance;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolveOutput {
@@ -26,8 +25,6 @@ pub struct ResolveOutput {
     pub blocking_reasons: Vec<String>,
     pub unsafe_for_automation: bool,
     pub why_canonical: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 fn expand_path_hint(q: &str) -> PathBuf {
@@ -157,26 +154,14 @@ pub fn resolve_target(
     plan: &PlanDocument,
     snapshot: &InventorySnapshot,
     query: &str,
-) -> ResolveOutput {
+) -> Result<ResolveOutput, AgentError> {
     let provenance = Provenance::from_snapshot(snapshot);
     let q = query.trim();
     if q.is_empty() {
-        return ResolveOutput {
-            schema_version: 1,
-            kind: "gittriage_resolve",
-            provenance,
-            query: query.to_string(),
-            canonical_path: None,
-            cluster_id: None,
-            cluster_label: None,
-            alternates: vec![],
-            confidence: None,
-            automation_verdict: AutomationVerdictLabel::Blocked,
-            blocking_reasons: vec!["Empty query.".into()],
-            unsafe_for_automation: true,
-            why_canonical: vec![],
-            error: Some("query is empty".into()),
-        };
+        return Err(AgentError::new(
+            AgentErrorCode::InvalidQuery,
+            "Query is empty",
+        ));
     }
 
     let path_guess = expand_path_hint(q);
@@ -199,35 +184,13 @@ pub fn resolve_target(
         None
     };
 
-    let cp_result = if let Some(cp) = by_path {
+    let cp = if let Some(cp) = by_path {
         Ok(cp)
     } else if let Some(cp) = by_url {
         Ok(cp)
     } else {
         resolve_cluster_plan(plan, q)
-    };
-
-    let cp = match cp_result {
-        Ok(cp) => cp,
-        Err(e) => {
-            return ResolveOutput {
-                schema_version: 1,
-                kind: "gittriage_resolve",
-                provenance,
-                query: query.to_string(),
-                canonical_path: None,
-                cluster_id: None,
-                cluster_label: None,
-                alternates: vec![],
-                confidence: None,
-                automation_verdict: AutomationVerdictLabel::Blocked,
-                blocking_reasons: vec![format!("{e:#}")],
-                unsafe_for_automation: true,
-                why_canonical: vec![],
-                error: Some(format!("{e:#}")),
-            };
-        }
-    };
+    }?;
 
     let v = automation_verdict_for_cluster(cp, snapshot);
     let canonical_path = cp
@@ -251,7 +214,7 @@ pub fn resolve_target(
     }
     alternates.sort();
 
-    ResolveOutput {
+    Ok(ResolveOutput {
         schema_version: 1,
         kind: "gittriage_resolve",
         provenance,
@@ -265,18 +228,20 @@ pub fn resolve_target(
         blocking_reasons: v.blocking_reasons.clone(),
         unsafe_for_automation: v.unsafe_for_automation,
         why_canonical: why_canonical_lines(cp),
-        error: None,
-    }
+    })
 }
 
 /// Internal: same algorithm as `gittriage::explain::resolve_cluster_plan` (duplicated to keep agent crate independent).
 pub(crate) fn resolve_cluster_plan<'a>(
     plan: &'a PlanDocument,
     query: &str,
-) -> Result<&'a ClusterPlan> {
+) -> Result<&'a ClusterPlan, AgentError> {
     let q = query.trim();
     if q.is_empty() {
-        bail!("cluster query is empty");
+        return Err(AgentError::new(
+            AgentErrorCode::InvalidQuery,
+            "Cluster query is empty",
+        ));
     }
 
     let by_id: Vec<_> = plan
@@ -307,14 +272,20 @@ pub(crate) fn resolve_cluster_plan<'a>(
         .collect();
 
     if substr.is_empty() {
-        bail!("no cluster matches {:?}", q);
+        return Err(AgentError::new(
+            AgentErrorCode::NoClusterMatch,
+            format!("no cluster matches {:?}", q),
+        ));
     }
     if substr.len() > 1 {
         let ids: Vec<String> = substr
             .iter()
             .map(|cp| format!("{} ({})", cp.cluster.label, cp.cluster.id))
             .collect();
-        bail!("ambiguous cluster query {:?}: {}", q, ids.join("; "));
+        return Err(AgentError::new(
+            AgentErrorCode::AmbiguousQuery,
+            format!("ambiguous cluster query {:?}: {}", q, ids.join("; ")),
+        ));
     }
     Ok(substr[0])
 }
@@ -323,10 +294,13 @@ pub(crate) fn resolve_cluster_plan_by_member<'a>(
     plan: &'a PlanDocument,
     kind: MemberKind,
     id: &str,
-) -> Result<&'a ClusterPlan> {
+) -> Result<&'a ClusterPlan, AgentError> {
     let id = id.trim();
     if id.is_empty() {
-        bail!("member id is empty");
+        return Err(AgentError::new(
+            AgentErrorCode::InvalidQuery,
+            "Member id is empty",
+        ));
     }
     let matches: Vec<_> = plan
         .clusters
@@ -339,8 +313,14 @@ pub(crate) fn resolve_cluster_plan_by_member<'a>(
         })
         .collect();
     match matches.len() {
-        0 => bail!("no cluster contains member {}", id),
+        0 => Err(AgentError::new(
+            AgentErrorCode::NoClusterMatch,
+            format!("no cluster contains member {}", id),
+        )),
         1 => Ok(matches[0]),
-        _ => bail!("internal error: multiple clusters contain member {:?}", id),
+        _ => Err(AgentError::new(
+            AgentErrorCode::InternalError,
+            format!("internal error: multiple clusters contain member {:?}", id),
+        )),
     }
 }

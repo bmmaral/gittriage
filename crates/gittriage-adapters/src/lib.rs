@@ -119,6 +119,9 @@ impl AdapterCache {
 }
 
 fn run_tool(tool: ExternalTool, root: &Path) -> Option<AdapterResult> {
+    // Note: not all tools have structured output that is parsed.
+    // As of 2026-05, only gitleaks and semgrep are parsed into findings.
+    // jscpd and syft have their summary output captured directly.
     let (args, bin): (&[&str], &str) = match tool {
         ExternalTool::Gitleaks => (
             &["detect", "-s", ".", "--exit-code", "0", "--no-banner"],
