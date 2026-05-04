@@ -310,7 +310,15 @@ pub struct ApiError(anyhow::Error);
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         tracing::error!(error = %self.0, "api error");
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", self.0)).into_response()
+        
+        let error_envelope = serde_json::json!({
+            "error": {
+                "message": format!("{}", self.0),
+                "code": "INTERNAL_ERROR",
+            }
+        });
+        
+        (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(error_envelope)).into_response()
     }
 }
 
