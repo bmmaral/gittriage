@@ -63,16 +63,19 @@ fn load_gittriageignore(root: &Path) -> Vec<glob::Pattern> {
         .collect()
 }
 
-fn is_gittriageignored(path: &Path, patterns: &[glob::Pattern]) -> bool {
+fn is_gittriageignored(root: &Path, path: &Path, patterns: &[glob::Pattern]) -> bool {
     if patterns.is_empty() {
         return false;
     }
-    let path_str = path.display().to_string();
+    
+    // Normalize path relative to root
+    let rel_path = path.strip_prefix(root).unwrap_or(path);
+    let path_str = rel_path.to_string_lossy().replace('\\', "/");
+    let file_name = rel_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    
     patterns.iter().any(|p| {
         p.matches(&path_str)
-            || path
-                .file_name()
-                .is_some_and(|n| p.matches(n.to_str().unwrap_or("")))
+            || (!file_name.is_empty() && p.matches(&file_name))
     })
 }
 
@@ -105,7 +108,7 @@ pub fn scan_roots(roots: &[PathBuf], options: &ScanOptions) -> Result<ScanOutcom
                 continue;
             }
 
-            if is_gittriageignored(path, &ignore_patterns) {
+            if is_gittriageignored(root, path, &ignore_patterns) {
                 continue;
             }
 
@@ -393,11 +396,24 @@ fn compute_fingerprint_and_size(path: &Path, max_files: usize) -> FingerprintRes
     let mut files = Vec::with_capacity(max_files);
     let mut total_size: u64 = 0;
 
-    for entry in walkdir::WalkDir::new(path) {
-        let entry = match entry {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+    let mut walker = walkdir::WalkDir::new(path).into_iter();
+    
+    while let Some(Ok(entry)) = walker.next() {
+        // Skip common large/irrelevant directories
+        if entry.file_type().is_dir() {
+            let name = entry.file_name().to_string_lossy();
+            if name == ".git" 
+                || name == "node_modules" 
+                || name == "target" 
+                || name == "build" 
+                || name == "dist" 
+                || name == "__pycache__" 
+                || name == "venv" 
+                || name == ".venv" {
+                walker.skip_current_dir();
+                continue;
+            }
+        }
 
         if entry.file_type().is_file() {
             if let Ok(meta) = entry.metadata() {
