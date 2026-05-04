@@ -18,6 +18,7 @@ pub struct GitMetadata {
     pub default_branch: Option<String>,
     pub is_dirty: bool,
     pub is_detached_head: bool,
+    pub is_shallow: bool,
     pub last_commit_at: Option<DateTime<Utc>>,
     pub remotes: Vec<GitRemote>,
     pub upstream_tracking: Option<UpstreamTracking>,
@@ -34,6 +35,7 @@ pub fn enrich_clone(path: &Path, clone: &mut CloneRecord) -> Result<Vec<GitRemot
     clone.default_branch = meta.default_branch;
     clone.is_dirty = meta.is_dirty;
     clone.is_detached_head = meta.is_detached_head;
+    clone.is_shallow = meta.is_shallow;
     clone.last_commit_at = meta.last_commit_at;
     clone.upstream_tracking = meta.upstream_tracking;
     Ok(meta.remotes)
@@ -53,6 +55,8 @@ pub fn read_git_metadata(path: &Path) -> Result<GitMetadata> {
 
     let is_detached_head = active_branch.as_deref().map(str::is_empty).unwrap_or(false);
 
+    let is_shallow = path.join(".git/shallow").exists();
+
     let last_commit_at = run_git(path, ["log", "-1", "--format=%cI"])
         .ok()
         .and_then(|s| DateTime::parse_from_rfc3339(s.trim()).ok())
@@ -71,6 +75,7 @@ pub fn read_git_metadata(path: &Path) -> Result<GitMetadata> {
         default_branch,
         is_dirty,
         is_detached_head,
+        is_shallow,
         last_commit_at,
         remotes,
         upstream_tracking,

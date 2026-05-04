@@ -199,6 +199,18 @@ pub fn evaluate_cluster(
             );
         }
 
+        if clone.is_shallow {
+            bump_canonical(
+                &mut scores,
+                -15.0,
+                &mut evidence,
+                &clone.id,
+                MemberKind::Clone,
+                "shallow_clone",
+                "clone is shallow; history is incomplete",
+            );
+        }
+
         if let Some(t) = &clone.upstream_tracking {
             if t.ahead_count > 0 {
                 bump_canonical(
