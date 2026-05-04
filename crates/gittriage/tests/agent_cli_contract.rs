@@ -252,3 +252,21 @@ fn check_path_snapshot_test() {
 
     insta::assert_json_snapshot!(check_path_output);
 }
+
+#[test]
+fn summary_snapshot_test() {
+    let h = Harness::new();
+
+    let summary_output = h.run_json(&h.with_config(&[
+        "summary",
+        "--agent",
+        "--format",
+        "json",
+        "--no-merge-base",
+    ]));
+
+    insta::assert_json_snapshot!(summary_output, {
+        ".provenance.generated_at" => "[generated_at]",
+        ".provenance.freshness.last_run_at" => "[last_run_at]",
+    });
+}
