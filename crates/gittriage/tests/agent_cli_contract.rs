@@ -219,3 +219,21 @@ fn resolve_snapshot_test() {
         ".freshness.last_run_at" => "[last_run_at]",
     });
 }
+
+#[test]
+fn preflight_snapshot_test() {
+    let h = Harness::new();
+
+    let preflight_output = h.run_json(&h.with_config(&[
+        "preflight",
+        h.repo_root.to_str().unwrap(),
+        "--format",
+        "json",
+        "--no-merge-base",
+    ]));
+
+    insta::assert_json_snapshot!(preflight_output, {
+        ".provenance.generated_at" => "[generated_at]",
+        ".provenance.freshness.last_run_at" => "[last_run_at]",
+    });
+}
